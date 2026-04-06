@@ -1,0 +1,96 @@
+.upload-page-container {
+  padding: 40px;
+  background-color: #f4f7f9; /* Same as dashboard background */
+  min-height: 100vh;
+}
+
+.content-header h1 {
+  color: #002d5b; /* Deep Navy from image 1 */
+  font-size: 28px;
+  margin: 0;
+}
+
+.content-header p {
+  color: #6c757d;
+  margin-top: 5px;
+  margin-bottom: 30px;
+}
+
+.form-wrapper {
+  max-width: 900px;
+}
+
+.upload-card {
+  background: #ffffff;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.form-section {
+  margin-bottom: 25px;
+}
+
+.input-label {
+  display: block;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.file-drop-area {
+  border: 2px dashed #cbd5e0;
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  background-color: #fafbfc;
+  cursor: pointer;
+  transition: border-color 0.3s;
+}
+
+.file-drop-area:hover {
+  border-color: #002d5b;
+}
+
+.upload-icon {
+  font-size: 24px;
+  margin-bottom: 10px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.text-input, .select-input {
+  width: 100%;
+  padding: 12px 15px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 15px;
+  outline: none;
+}
+
+.text-input:focus, .select-input:focus {
+  border-color: #002d5b;
+}
+
+.submit-button {
+  background-color: #002d5b; /* Matches your dashboard blue */
+  color: white;
+  padding: 14px 28px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 10px;
+  transition: background 0.2s;
+}
+
+.submit-button:hover {
+  background-color: #001a35;
+}
