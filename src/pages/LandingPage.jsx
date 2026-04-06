@@ -4,7 +4,6 @@ import { useState } from "react";
 export default function LandingPage() {
     const navigate = useNavigate();
     const [hoveredButton, setHoveredButton] = useState(null);
-    const [hoveredNav, setHoveredNav] = useState(null);
 
     return (
         <div style={styles.wrapper}>
@@ -27,19 +26,6 @@ export default function LandingPage() {
 
                 <nav style={styles.navbar}>
                     <div style={styles.navContent}>
-                        {["HOME", "ABOUT", "DOCUMENTS", "STATISTICS"].map((item) => (
-                            <span
-                                key={item}
-                                style={{
-                                    ...styles.navItem,
-                                    ...(hoveredNav === item ? styles.navItemHover : {}),
-                                }}
-                                onMouseEnter={() => setHoveredNav(item)}
-                                onMouseLeave={() => setHoveredNav(null)}
-                            >
-                                {item}
-                            </span>
-                        ))}
                     </div>
                 </nav>
             </div>

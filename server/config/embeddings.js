@@ -125,6 +125,7 @@ const processDocument = async (doc) => {
   const BATCH_SIZE = 3;
 
   console.log(`Total chunks to embed: ${totalChunks}`);
+  console.log(`First chunk preview: "${chunks[0].substring(0, 120)}..."`);
 
   for (let i = 0; i < totalChunks; i += BATCH_SIZE) {
     const batch = chunks.slice(i, i + BATCH_SIZE);

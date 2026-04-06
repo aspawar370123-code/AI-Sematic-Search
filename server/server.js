@@ -162,36 +162,36 @@ app.delete("/documents/:id", async (req, res) => {
     // 1. Delete from Cloudinary
     // Try 'image' first (default for PDFs) then 'raw' if that fails
     try {
-      await cloudinary.uploader.destroy(doc.cloudinaryId); 
+      await cloudinary.uploader.destroy(doc.cloudinaryId);
     } catch (err) {
       console.error("Cloudinary delete failed, trying raw...", err.message);
       await cloudinary.uploader.destroy(doc.cloudinaryId, { resource_type: "raw" });
     }
 
     // 2. Delete from Pinecone
-try {
-  const index = getPineconeIndex();
-  
-  // Fetch the list of vector IDs associated with this document
-  // We use the ID as a prefix to catch all chunks (e.g., "ID-chunk-0", "ID-chunk-1")
-  const listResponse = await index.listPaginated({ prefix: `${req.params.id}-` });
-  
-  // Extract IDs correctly from the listResponse object
-  const vectorIds = (listResponse.vectors || []).map(v => v.id);
+    try {
+      const index = getPineconeIndex();
 
-  if (vectorIds.length > 0) {
-    console.log(`Deleting ${vectorIds.length} vectors for doc: ${req.params.id}`);
-    await index.deleteMany(vectorIds);
-  } else {
-    console.log("No vectors found in Pinecone for this ID prefix.");
-  }
-} catch (vectorErr) {
-  console.error("Pinecone cleanup failed:", vectorErr.message);
-}
+      // Fetch the list of vector IDs associated with this document
+      // We use the ID as a prefix to catch all chunks (e.g., "ID-chunk-0", "ID-chunk-1")
+      const listResponse = await index.listPaginated({ prefix: `${req.params.id}-` });
+
+      // Extract IDs correctly from the listResponse object
+      const vectorIds = (listResponse.vectors || []).map(v => v.id);
+
+      if (vectorIds.length > 0) {
+        console.log(`Deleting ${vectorIds.length} vectors for doc: ${req.params.id}`);
+        await index.deleteMany(vectorIds);
+      } else {
+        console.log("No vectors found in Pinecone for this ID prefix.");
+      }
+    } catch (vectorErr) {
+      console.error("Pinecone cleanup failed:", vectorErr.message);
+    }
 
     // 3. Delete from MongoDB
     await Document.findByIdAndDelete(req.params.id);
-    
+
     res.json({ message: "Document deleted successfully" });
   } catch (error) {
     console.error("Delete route error:", error);
@@ -212,7 +212,7 @@ app.get("/stats", async (req, res) => {
       QueryHistory.countDocuments(),
       Officer.countDocuments(), // Changed logic to show all registered officers as requested
     ]);
-    
+
     // Ensure the keys here match exactly what the frontend is looking for
     res.json({ total, policies, regulations, schemes, reports, totalQueries, activeUsers });
   } catch (error) {
@@ -260,9 +260,16 @@ app.post("/api/officer/search", async (req, res) => {
       if (!dbDoc) return null;
 
       const rawExcerpt = m.metadata.text || "";
+
+      // Detect garbled text: either high non-ASCII ratio (Hindi/Marathi script)
+      // OR very low ratio of real English words (font-encoding corruption)
       const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
-      const excerpt = nonAsciiRatio > 0.4
-        ? "[This document contains content in Hindi/Marathi. Use 'View Context' to get an AI-translated summary.]"
+      const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
+      const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
+      const isGarbled = nonAsciiRatio > 0.3 || realWordRatio < 0.25;
+
+      const excerpt = isGarbled
+        ? "[This document contains encoded or non-English content. Click 'View Context' for an AI-generated English summary.]"
         : rawExcerpt;
 
       return {
@@ -300,8 +307,8 @@ app.post("/api/officer/ask", async (req, res) => {
 
     const filter = {};
     if (authority && authority !== "") filter.authority = { $eq: authority };
-    if (year && year !== "")           filter.year      = { $eq: String(year) };
-    if (docType && docType !== "")     filter.docType   = { $eq: docType };
+    if (year && year !== "") filter.year = { $eq: String(year) };
+    if (docType && docType !== "") filter.docType = { $eq: docType };
 
     const queryResponse = await index.query({
       vector,
