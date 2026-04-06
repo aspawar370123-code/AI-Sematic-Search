@@ -18,7 +18,7 @@ const ManageDocuments = () => {
 
   const fetchDocuments = async () => {
     try {
-      const res = await fetch("http://localhost:5000/documents");
+      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents`);
       const data = await res.json();
       setDocuments(data); // already sorted latest-first by server
     } catch (err) {
@@ -32,7 +32,7 @@ const ManageDocuments = () => {
   if (!window.confirm("Are you sure you want to delete this document? This action cannot be undone.")) return;
 
   try {
-    const res = await fetch(`http://localhost:5000/documents/${id}`, { 
+    const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents/${id}`, { 
       method: "DELETE" 
     });
 
@@ -67,7 +67,7 @@ const ManageDocuments = () => {
 
   setRenameLoading(true);
   try {
-    const res = await fetch(`http://localhost:5000/documents/${id}/rename`, {
+    const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents/${id}/rename`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: trimmed }),

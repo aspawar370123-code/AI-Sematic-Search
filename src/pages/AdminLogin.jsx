@@ -19,7 +19,7 @@ export default function AdminAuthPage() {
 
     if (isLogin) {
 
-        const response = await fetch("http://localhost:5000/admin/login", {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/login`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -38,7 +38,7 @@ export default function AdminAuthPage() {
 
     } else {
 
-        const response = await fetch("http://localhost:5000/admin/register", {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/register`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"

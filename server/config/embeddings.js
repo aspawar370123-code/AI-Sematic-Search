@@ -1,4 +1,3 @@
-require("dotenv").config();
 const { Pinecone } = require("@pinecone-database/pinecone");
 const pdfParse = require("pdf-parse");
 const axios = require("axios");

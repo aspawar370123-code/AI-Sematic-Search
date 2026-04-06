@@ -22,7 +22,7 @@ export default function AdminDashboardPage() {
     ]);
 
     useEffect(() => {
-        fetch("http://localhost:5000/stats")
+        fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/stats`)
             .then(res => res.json())
             .then(data => {
                 setStatsData([

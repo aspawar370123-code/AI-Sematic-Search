@@ -44,7 +44,7 @@ const UploadDocuments = () => {
     uploadData.append("file", formData.file);
 
     try {
-      const response = await fetch("http://localhost:5000/upload", {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/upload`, {
         method: "POST",
         body: uploadData
       });

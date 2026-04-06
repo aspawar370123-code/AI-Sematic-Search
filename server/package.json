@@ -26,6 +26,8 @@
     "multer-storage-cloudinary": "^4.0.0",
     "openai": "^6.27.0",
     "pdf-parse": "^1.1.1",
+    "pdf2pic": "^3.2.0",
+    "tesseract.js": "^7.0.0",
     "voyageai": "^0.2.1"
   }
 }
