@@ -38,7 +38,12 @@ const documentSchema = new mongoose.Schema({
   uploadedAt: {
     type: Date,
     default: Date.now
-  }
+  },
+  embeddingStatus: {
+  type: String,
+  enum: ["pending", "processing", "done", "failed"],
+  default: "pending"
+}
 });
 
 module.exports = mongoose.model("Document", documentSchema);

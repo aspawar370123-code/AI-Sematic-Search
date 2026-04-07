@@ -94,3 +94,7 @@
 .submit-button:hover {
   background-color: #001a35;
 }
+@
+keyframes spin {
+  to { transform: rotate(360deg); }
+}

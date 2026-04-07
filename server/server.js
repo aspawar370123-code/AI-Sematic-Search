@@ -7,7 +7,6 @@ const https = require("https");
 const axios = require("axios");
 const { Pinecone } = require("@pinecone-database/pinecone");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-
 const { VoyageAIClient } = require("voyageai");
 
 // Internal Modules
@@ -17,13 +16,18 @@ const Admin = require("./models/Admin");
 const Officer = require("./models/Officer");
 const { processDocument, queryDocuments } = require("./config/embeddings");
 const upload = require("./config/multerCloudinary");
-const cloudinary = require("./config/cloudinary"); // ✅ top-level import
+const cloudinary = require("./config/cloudinary");
 
 const app = express();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
 
-app.use(cors());
+app.use(cors({
+  origin: true, // reflects the request origin — allows any origin including localhost and deployed frontend
+  methods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
+  credentials: true
+}));
+app.options("/{*path}", cors()); // handle preflight for all routes
 app.use(express.json());
 
 /* MongoDB Connection */
@@ -38,7 +42,6 @@ const getPineconeIndex = () => {
   return pc.index(process.env.PINECONE_INDEX);
 };
 
-// Embedding helper — Voyage AI voyage-3-lite (512 dims)
 const getEmbedding = async (text) => {
   const result = await voyage.embed({ input: [text], model: "voyage-3-lite" });
   return result.data[0].embedding;
@@ -99,7 +102,7 @@ app.post("/officer/login", async (req, res) => {
   }
 });
 
-/* Upload Route */
+/* Upload Route — saves doc, starts embedding in background, responds immediately */
 app.post("/upload", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: "No file uploaded" });
   const { title, authority, docType, year } = req.body;
@@ -117,13 +120,44 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       fileName: req.file.originalname,
       fileSize: req.file.size,
       cloudinaryId: req.file.filename,
+      embeddingStatus: "processing",
     });
     await newDoc.save();
-    console.log("Document saved:", newDoc._id, "| Starting embedding...");
-    processDocument(newDoc).catch(err => console.error("Embedding error:", err.message, err.stack));
-    res.json({ message: "Document uploaded successfully", document: { id: newDoc._id, title: newDoc.title, fileUrl: newDoc.fileUrl } });
+    console.log("=== DOCUMENT SAVED | ID:", newDoc._id.toString(), "===");
+
+    // Respond immediately with the doc ID — frontend will poll for status
+    res.json({
+      message: "Document saved. Embeddings processing...",
+      document: { id: newDoc._id, title: newDoc.title, fileUrl: newDoc.fileUrl, embeddingStatus: "processing" },
+    });
+
+    // Run embedding pipeline in background AFTER response is sent
+    try {
+      console.log("=== EMBEDDING PIPELINE STARTING ===");
+      await processDocument(newDoc);
+      await Document.findByIdAndUpdate(newDoc._id, { embeddingStatus: "done" });
+      console.log("=== EMBEDDING PIPELINE COMPLETE ===");
+    } catch (embErr) {
+      await Document.findByIdAndUpdate(newDoc._id, { embeddingStatus: "failed" });
+      console.error("=== EMBEDDING FAILED ===", embErr.message, embErr.stack);
+    }
+
   } catch (error) {
+    console.error("=== UPLOAD ERROR ===", error.message);
     res.status(500).json({ message: "Upload failed", error: error.message });
+  }
+});
+
+/* Status polling endpoint */
+app.get("/documents/:id/status", async (req, res) => {
+  try {
+    const doc = await Document.findById(req.params.id).select("embeddingStatus title");
+    if (!doc) return res.status(404).json({ message: "Document not found" });
+    // Old docs uploaded before embeddingStatus field existed — treat as done
+    const status = doc.embeddingStatus || "done";
+    res.json({ embeddingStatus: status, title: doc.title });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch status", error: error.message });
   }
 });
 
@@ -160,7 +194,6 @@ app.delete("/documents/:id", async (req, res) => {
     if (!doc) return res.status(404).json({ message: "Document not found" });
 
     // 1. Delete from Cloudinary
-    // Try 'image' first (default for PDFs) then 'raw' if that fails
     try {
       await cloudinary.uploader.destroy(doc.cloudinaryId);
     } catch (err) {
@@ -171,14 +204,8 @@ app.delete("/documents/:id", async (req, res) => {
     // 2. Delete from Pinecone
     try {
       const index = getPineconeIndex();
-
-      // Fetch the list of vector IDs associated with this document
-      // We use the ID as a prefix to catch all chunks (e.g., "ID-chunk-0", "ID-chunk-1")
       const listResponse = await index.listPaginated({ prefix: `${req.params.id}-` });
-
-      // Extract IDs correctly from the listResponse object
       const vectorIds = (listResponse.vectors || []).map(v => v.id);
-
       if (vectorIds.length > 0) {
         console.log(`Deleting ${vectorIds.length} vectors for doc: ${req.params.id}`);
         await index.deleteMany(vectorIds);
@@ -202,23 +229,21 @@ app.delete("/documents/:id", async (req, res) => {
 /* Stats */
 app.get("/stats", async (req, res) => {
   try {
-    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const [total, policies, regulations, schemes, reports, totalQueries, activeUsers] = await Promise.all([
       Document.countDocuments(),
       Document.countDocuments({ docType: "Policy" }),
       Document.countDocuments({ docType: "Regulation" }),
       Document.countDocuments({ docType: "Scheme" }),
-      Document.countDocuments({ docType: "Report" }), // Change "Reports" to "Report" to match your Upload logic
+      Document.countDocuments({ docType: "Report" }),
       QueryHistory.countDocuments(),
-      Officer.countDocuments(), // Changed logic to show all registered officers as requested
+      Officer.countDocuments(),
     ]);
-
-    // Ensure the keys here match exactly what the frontend is looking for
     res.json({ total, policies, regulations, schemes, reports, totalQueries, activeUsers });
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch stats" });
   }
 });
+
 /* AI Query (legacy) */
 app.post("/query", async (req, res) => {
   const { question } = req.body;
@@ -260,9 +285,6 @@ app.post("/api/officer/search", async (req, res) => {
       if (!dbDoc) return null;
 
       const rawExcerpt = m.metadata.text || "";
-
-      // Detect garbled text: either high non-ASCII ratio (Hindi/Marathi script)
-      // OR very low ratio of real English words (font-encoding corruption)
       const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
       const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
       const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
@@ -284,11 +306,13 @@ app.post("/api/officer/search", async (req, res) => {
         fileName: dbDoc.fileName || null,
       };
     }).filter(Boolean).sort((a, b) => b.score - a.score);
+
     await new QueryHistory({
       queryText: queryText,
       topDocumentTitle: enriched[0]?.title || "N/A",
-      results: enriched
+      results: enriched,
     }).save();
+
     res.json({ documents: enriched });
   } catch (error) {
     console.error("Search error:", error);
@@ -330,7 +354,6 @@ app.post("/api/officer/ask", async (req, res) => {
       .map((m, i) => `[Source ${i + 1}] ${m.metadata.title} (${m.metadata.authority}, ${m.metadata.year}):\n${m.metadata.text}`)
       .join("\n\n---\n\n");
 
-    // ✅ FIX 3: Multilingual prompt — Gemini understands Hindi/Marathi, always answers in English
     const generativeModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const prompt = `You are an expert assistant for the Department of Higher Education.
 The policy documents below may be written in English, Hindi, or Marathi.
@@ -393,12 +416,10 @@ app.post("/api/officer/summarize", async (req, res) => {
   try {
     let chunkTexts = "";
 
-    // Fast path: use excerpt already sent from the frontend (avoids Pinecone re-fetch)
     if (excerptText && excerptText.trim().length > 20 && !excerptText.startsWith("[")) {
       chunkTexts = excerptText;
       console.log("Summarize: using excerpt from frontend");
     } else {
-      // Slow path: fetch all chunks from Pinecone
       const index = getPineconeIndex();
       let vectorIds = [];
       let nextToken = undefined;
@@ -458,6 +479,16 @@ SUMMARY (in English):`;
   }
 });
 
+/* Officer Query History */
+app.get("/api/officer/history", async (req, res) => {
+  try {
+    const history = await QueryHistory.find().sort({ createdAt: -1 }).limit(20);
+    res.json(history);
+  } catch (err) {
+    res.status(500).send(err);
+  }
+});
+
 /* Test Models Route */
 app.get("/test-models", (req, res) => {
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
@@ -490,11 +521,3 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-app.get("/api/officer/history", async (req, res) => {
-  try {
-    const history = await QueryHistory.find().sort({ createdAt: -1 }).limit(20);
-    res.json(history);
-  } catch (err) {
-    res.status(500).send(err);
-  }
-});

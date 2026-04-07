@@ -13,6 +13,8 @@ const UploadDocuments = () => {
     file: null,
   });
 
+  const [uploadState, setUploadState] = useState("idle"); // idle | uploading | processing | done | error
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     // Handle N/A or integer conversion for years
@@ -44,25 +46,29 @@ const UploadDocuments = () => {
     uploadData.append("file", formData.file);
 
     try {
+      setUploadState("uploading");
       const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/upload`, {
         method: "POST",
         body: uploadData
       });
 
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
 
-      const data = await response.json();
-      alert(`Document uploaded successfully!`);
+      // Button stays in "processing" state while backend does chunking + embedding
+      setUploadState("processing");
+      const data = await response.json(); // this only resolves when ALL embeddings are done
 
+      setUploadState("done");
       setFormData({ title: "", authority: "", docType: "", year: 2024, file: null });
       if (document.getElementById("file-input")) {
         document.getElementById("file-input").value = "";
       }
+      setTimeout(() => setUploadState("idle"), 4000);
 
     } catch (error) {
+      setUploadState("error");
       alert(`Upload failed: ${error.message}`);
+      setUploadState("idle");
     }
   };
 
@@ -72,6 +78,15 @@ const UploadDocuments = () => {
   for (let i = currentYear; i >= 1990; i--) {
     yearOptions.push(i);
   }
+
+  const spinnerStyle = {
+    width: "14px", height: "14px",
+    border: "2px solid rgba(255,255,255,0.4)",
+    borderTop: "2px solid #ffffff",
+    borderRadius: "50%",
+    display: "inline-block",
+    animation: "spin 0.8s linear infinite",
+  };
   // ----------------------------------
 
   return (
@@ -185,7 +200,27 @@ const UploadDocuments = () => {
                       ))}
                     </select>
                   </div>
-                  <button type="submit" className="submit-button">Upload Document</button>
+                  <button
+                    type="submit"
+                    className="submit-button"
+                    disabled={uploadState === "uploading" || uploadState === "processing"}
+                    style={{
+                      opacity: uploadState === "uploading" || uploadState === "processing" ? 0.75 : 1,
+                      cursor: uploadState === "uploading" || uploadState === "processing" ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: "10px"
+                    }}
+                  >
+                    {uploadState === "uploading" && <><span style={spinnerStyle} />Uploading to Cloudinary...</>}
+                    {uploadState === "processing" && <><span style={spinnerStyle} />Processing Embeddings...</>}
+                    {uploadState === "done" && <>✅ Upload Complete!</>}
+                    {(uploadState === "idle" || uploadState === "error") && <>Upload Document</>}
+                  </button>
+
+                  {uploadState === "processing" && (
+                    <p style={{ fontSize: "12px", color: "#64748b", marginTop: "10px", textAlign: "center" }}>
+                      The document is being chunked and embedded in the background. You can navigate away safely.
+                    </p>
+                  )}
                 </form>
               </div>
             </div>

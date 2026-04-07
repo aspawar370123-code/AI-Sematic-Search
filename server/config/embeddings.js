@@ -25,66 +25,49 @@ function cleanText(text) {
     .trim();
 }
 /* SPLIT TEXT INTO CHUNKS */
-const chunkText = (text, chunkSize = 200) => {
+const chunkText = (text, chunkSize = 100) => {
   const words = text.split(/\s+/);
   const chunks = [];
-
   for (let i = 0; i < words.length; i += chunkSize) {
-    chunks.push(words.slice(i, i + chunkSize).join(" "));
+    const chunk = words.slice(i, i + chunkSize).join(" ");
+    chunks.push(chunk);
   }
-
-  console.log("Chunking complete");
-  console.log("Total words:", words.length);
-  console.log("Total chunks created:", chunks.length);
-
   return chunks;
 };
 
 /* EXTRACT TEXT FROM PDF */
 const extractTextFromPDF = async (fileUrl) => {
-  console.log("Downloading PDF from:", fileUrl);
+  console.log(`[STEP 2] Downloading document from Cloudinary...`);
+  console.log(`[STEP 2] URL: ${fileUrl}`);
 
-  const response = await axios.get(fileUrl, {
-    responseType: "arraybuffer",
-  });
-
+  const response = await axios.get(fileUrl, { responseType: "arraybuffer" });
   const buffer = Buffer.from(response.data);
+  console.log(`[STEP 2] Download complete. File size: ${(buffer.length / 1024).toFixed(1)} KB`);
 
+  console.log(`[STEP 3] Starting PDF text extraction...`);
   const parsed = await pdfParse(buffer);
+  console.log(`[STEP 3] PDF parsed. Pages: ${parsed.numpages} | Raw text: ${parsed.text?.length || 0} chars`);
 
   if (parsed.text && parsed.text.trim().length > 50) {
-    console.log("PDF text extracted successfully (text-based)");
+    console.log(`[STEP 3] Text-based PDF. Extraction successful.`);
     return parsed.text;
   }
 
-  console.log("PDF appears scanned. Running OCR...");
-
-  const converter = fromBuffer(buffer, {
-    density: 200,
-    format: "png",
-    width: 1654,
-    height: 2339,
-  });
-
+  console.log(`[STEP 3] Scanned PDF detected. Starting OCR...`);
+  const converter = fromBuffer(buffer, { density: 200, format: "png", width: 1654, height: 2339 });
   const totalPages = parsed.numpages || 1;
   const pageTexts = [];
 
   for (let p = 1; p <= totalPages; p++) {
-    console.log(`OCR processing page ${p}/${totalPages}`);
-
+    console.log(`[OCR] Processing page ${p}/${totalPages}...`);
     const page = await converter(p, { responseType: "buffer" });
-
-    const {
-      data: { text: pageText },
-    } = await Tesseract.recognize(page.buffer, "eng+hin");
-
+    const { data: { text: pageText } } = await Tesseract.recognize(page.buffer, "eng+hin");
+    console.log(`[OCR] Page ${p} done. Chars extracted: ${pageText.length}`);
     pageTexts.push(pageText);
   }
 
   const fullText = pageTexts.join("\n");
-
-  console.log("OCR complete. Extracted length:", fullText.length);
-
+  console.log(`[STEP 3] OCR complete. Total chars: ${fullText.length}`);
   return fullText;
 };
 
@@ -115,30 +98,56 @@ const generateEmbedding = async (text) => {
 };
 
 const processDocument = async (doc) => {
-  console.log("=====================================");
-  console.log("PROCESSING DOCUMENT:", doc.title);
-  console.log("=====================================");
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`[STEP 1] DOCUMENT UPLOAD PIPELINE STARTED`);
+  console.log(`[STEP 1] Title    : ${doc.title}`);
+  console.log(`[STEP 1] Doc ID   : ${doc._id}`);
+  console.log(`[STEP 1] Authority: ${doc.authority}`);
+  console.log(`[STEP 1] DocType  : ${doc.docType}`);
+  console.log(`[STEP 1] Year     : ${doc.year}`);
+  console.log(`${"=".repeat(50)}`);
 
+  // Steps 2 & 3 happen inside extractTextFromPDF
   const rawText = await extractTextFromPDF(doc.fileUrl);
-  const chunks = chunkText(cleanText(rawText)).filter(c => c.trim().length > 0);
-  const totalChunks = chunks.length;
-  const BATCH_SIZE = 3;
 
-  console.log(`Total chunks to embed: ${totalChunks}`);
-  console.log(`First chunk preview: "${chunks[0].substring(0, 120)}..."`);
+  // Step 4: Chunking
+  console.log(`\n[STEP 4] Starting chunking process...`);
+  const allChunks = chunkText(cleanText(rawText));
+  const chunks = allChunks.filter(c => c.trim().length > 0);
+  const totalChunks = chunks.length;
+  console.log(`[STEP 4] Total words in document : ${rawText.split(/\s+/).length}`);
+  console.log(`[STEP 4] Total chunks created    : ${totalChunks}`);
+  chunks.forEach((chunk, idx) => {
+    console.log(`[STEP 4] Chunk ${String(idx + 1).padStart(3, "0")} | ${chunk.split(/\s+/).length} words | ${chunk.length} chars | "${chunk.substring(0, 60).replace(/\n/g, " ")}..."`);
+  });
+
+  if (totalChunks === 0) {
+    console.error(`[STEP 4] ERROR: No valid chunks produced. Aborting.`);
+    return;
+  }
+
+  // Steps 5 & 6: Embed + Upsert
+  const BATCH_SIZE = 3;
+  const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
+  let totalUploaded = 0;
+
+  console.log(`\n[STEP 5] Starting embedding + Pinecone upload...`);
+  console.log(`[STEP 5] Batch size: ${BATCH_SIZE} | Total batches: ${totalBatches}`);
 
   for (let i = 0; i < totalChunks; i += BATCH_SIZE) {
     const batch = chunks.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
 
-    console.log(`Embedding batch ${batchNum}/${totalBatches} (chunks ${i + 1}–${Math.min(i + BATCH_SIZE, totalChunks)})`);
+    console.log(`\n[STEP 5] Generating embeddings for batch ${batchNum}/${totalBatches} (chunks ${i + 1}–${Math.min(i + BATCH_SIZE, totalChunks)})...`);
+    const embeddings = await generateEmbeddingsBatch(batch);
+    console.log(`[STEP 5] Embeddings generated. Vector dims: ${embeddings[0]?.length}`);
 
-    const embeddings = await generateEmbeddingsBatch(batch); // retries built-in
-
-    await getIndex().upsert({
-      records: embeddings.map((values, j) => ({
-        id: `${doc._id}-chunk-${i + j}`,
+    const records = embeddings.map((values, j) => {
+      const chunkIdx = i + j;
+      const recordId = `${doc._id}-chunk-${chunkIdx}`;
+      console.log(`[STEP 6] Uploading chunk ${chunkIdx + 1}/${totalChunks} to Pinecone | Record ID: ${recordId}`);
+      return {
+        id: recordId,
         values,
         metadata: {
           docId: doc._id.toString(),
@@ -146,24 +155,27 @@ const processDocument = async (doc) => {
           authority: doc.authority,
           docType: doc.docType,
           year: doc.year ? doc.year.toString() : "N/A",
-          chunkIndex: i + j,
+          chunkIndex: chunkIdx,
           text: batch[j],
         },
-      })),
+      };
     });
 
-    console.log(`✅ Batch ${batchNum}/${totalBatches} stored`);
+    await getIndex().upsert({ records });
+    totalUploaded += batch.length;
+    console.log(`[STEP 6] ✅ Batch ${batchNum}/${totalBatches} stored in Pinecone. Total uploaded so far: ${totalUploaded}/${totalChunks}`);
 
-    // Voyage free tier = 3 RPM — wait 25s between batches
     if (i + BATCH_SIZE < totalChunks) {
-      console.log("⏳ Waiting 25s (Voyage free tier: 3 RPM)...");
+      console.log(`[WAIT] Voyage free tier (3 RPM) — waiting 25s before next batch...`);
       await sleep(25000);
     }
   }
 
-  console.log("=====================================");
-  console.log("DOCUMENT EMBEDDING COMPLETE");
-  console.log("=====================================");
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`[DONE] PIPELINE COMPLETE`);
+  console.log(`[DONE] Document  : ${doc.title}`);
+  console.log(`[DONE] Total chunks uploaded to Pinecone: ${totalUploaded}`);
+  console.log(`${"=".repeat(50)}\n`);
 };
 
 /* QUERY DOCUMENTS */
