@@ -5,7 +5,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { VoyageAIClient } = require("voyageai");
 const Tesseract = require("tesseract.js");
 const { fromBuffer } = require("pdf2pic");
-
+const natural = require('natural');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
