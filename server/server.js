@@ -255,15 +255,41 @@ app.post("/query", async (req, res) => {
   }
 });
 
-/* Officer Search */
+const generateSparseVector = (text) => {
+  const words = text.toLowerCase().match(/\w+/g) || [];
+  const counts = {};
+  words.forEach(word => {
+    let hash = 0;
+    for (let i = 0; i < word.length; i++) {
+      hash = ((hash << 5) - hash) + word.charCodeAt(i);
+      hash |= 0;
+    }
+    const index = Math.abs(hash) % 1000000;
+    counts[index] = (counts[index] || 0) + 1;
+  });
+  return {
+    indices: Object.keys(counts).map(Number),
+    values: Object.values(counts).map(v => parseFloat(v.toFixed(2)))
+  };
+};
+
+/* Corrected Search Route - Add to server.js */
 app.post("/api/officer/search", async (req, res) => {
   const { queryText } = req.body;
   if (!queryText?.trim()) return res.status(400).json({ message: "Query text is required" });
 
   try {
-    const vector = await getEmbedding(queryText);
+    const vector = await getEmbedding(queryText); // Returns 512 dims for voyage-3-lite
+    const sparseVector = generateSparseVector(queryText); 
+
     const index = getPineconeIndex();
-    const queryResponse = await index.query({ vector, topK: 8, includeMetadata: true });
+
+    const queryResponse = await index.query({
+      vector,
+      sparseVector,
+      topK: 12,
+      includeMetadata: true
+    });
 
     const bestChunkPerDoc = new Map();
     for (const m of queryResponse.matches) {
@@ -274,9 +300,7 @@ app.post("/api/officer/search", async (req, res) => {
     }
 
     const uniqueDocIds = Array.from(bestChunkPerDoc.keys());
-    console.log("Unique docIds from Pinecone:", uniqueDocIds);
     const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName");
-    console.log("Docs found in MongoDB:", docs.length);
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
     const enriched = uniqueDocIds.map(docId => {
@@ -288,10 +312,9 @@ app.post("/api/officer/search", async (req, res) => {
       const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
       const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
       const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
-      const isGarbled = nonAsciiRatio > 0.3 || realWordRatio < 0.25;
-
-      const excerpt = isGarbled
-        ? "[This document contains encoded or non-English content. Click 'View Context' for an AI-generated English summary.]"
+      
+      const excerpt = (nonAsciiRatio > 0.3 || realWordRatio < 0.25)
+        ? "[Content in multiple languages. View full document for details.]"
         : rawExcerpt;
 
       return {
@@ -308,7 +331,7 @@ app.post("/api/officer/search", async (req, res) => {
     }).filter(Boolean).sort((a, b) => b.score - a.score);
 
     await new QueryHistory({
-      queryText: queryText,
+      queryText,
       topDocumentTitle: enriched[0]?.title || "N/A",
       results: enriched,
     }).save();

@@ -29,7 +29,6 @@ const UploadDocuments = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Validation
     if (!formData.title.trim()) { alert("Please enter a document title"); return; }
     if (!formData.authority) { alert("Please select an authority"); return; }
     if (!formData.docType) { alert("Please select a document type"); return; }
@@ -46,6 +45,7 @@ const UploadDocuments = () => {
     uploadData.append("file", formData.file);
 
     try {
+      // PHASE 1: Upload file to Cloudinary + save to MongoDB
       setUploadState("uploading");
       const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/upload`, {
         method: "POST",
@@ -53,22 +53,45 @@ const UploadDocuments = () => {
       });
 
       if (!response.ok) throw new Error(`Server error: ${response.status}`);
+      const data = await response.json();
+      const docId = data.document.id;
 
-      // Button stays in "processing" state while backend does chunking + embedding
+      // PHASE 2: Poll backend every 5s until embeddingStatus === "done" or "failed"
       setUploadState("processing");
-      const data = await response.json(); // this only resolves when ALL embeddings are done
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+      await new Promise((resolve, reject) => {
+        const interval = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`${apiBase}/documents/${docId}/status`);
+            const statusData = await statusRes.json();
+
+            if (statusData.embeddingStatus === "done") {
+              clearInterval(interval);
+              resolve();
+            } else if (statusData.embeddingStatus === "failed") {
+              clearInterval(interval);
+              reject(new Error("Embedding pipeline failed on the server."));
+            }
+            // still "processing" — keep polling
+          } catch (pollErr) {
+            clearInterval(interval);
+            reject(pollErr);
+          }
+        }, 5000); // poll every 5 seconds
+      });
+
+      // PHASE 3: All chunks in Pinecone — show success
       setUploadState("done");
       setFormData({ title: "", authority: "", docType: "", year: 2024, file: null });
       if (document.getElementById("file-input")) {
         document.getElementById("file-input").value = "";
       }
-      setTimeout(() => setUploadState("idle"), 4000);
+      setTimeout(() => setUploadState("idle"), 5000);
 
     } catch (error) {
-      setUploadState("error");
-      alert(`Upload failed: ${error.message}`);
       setUploadState("idle");
+      alert(`Upload failed: ${error.message}`);
     }
   };
 
@@ -210,15 +233,15 @@ const UploadDocuments = () => {
                       display: "flex", alignItems: "center", justifyContent: "center", gap: "10px"
                     }}
                   >
-                    {uploadState === "uploading" && <><span style={spinnerStyle} />Uploading to Cloudinary...</>}
-                    {uploadState === "processing" && <><span style={spinnerStyle} />Processing Embeddings...</>}
+                    {uploadState === "uploading" && <><span style={spinnerStyle} />Processing Document...</>}
+                    {uploadState === "processing" && <><span style={spinnerStyle} />Processing Document...</>}
                     {uploadState === "done" && <>✅ Upload Complete!</>}
                     {(uploadState === "idle" || uploadState === "error") && <>Upload Document</>}
                   </button>
 
                   {uploadState === "processing" && (
                     <p style={{ fontSize: "12px", color: "#64748b", marginTop: "10px", textAlign: "center" }}>
-                      The document is being chunked and embedded in the background. You can navigate away safely.
+                      Chunking and storing embeddings in Pinecone. Please wait...
                     </p>
                   )}
                 </form>

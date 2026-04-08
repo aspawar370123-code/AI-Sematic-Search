@@ -24,6 +24,107 @@ function cleanText(text) {
     .replace(/[\u0000-\u001F]/g, " ")
     .trim();
 }
+// Add to your imports in embeddings.js
+const natural = require('natural');
+const tokenizer = new natural.WordTokenizer();
+
+/**
+ * HELPER: Generates a sparse vector for Hybrid Search (BM25 logic).
+ * This must be present in the file for processDocument to work.
+ */
+const generateSparseVector = (text) => {
+  const words = text.toLowerCase().match(/\w+/g) || [];
+  const counts = {};
+  words.forEach(word => {
+    let hash = 0;
+    for (let i = 0; i < word.length; i++) {
+      hash = ((hash << 5) - hash) + word.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+    const index = Math.abs(hash) % 1000000;
+    counts[index] = (counts[index] || 0) + 1;
+  });
+  return {
+    indices: Object.keys(counts).map(Number),
+    values: Object.values(counts).map(v => parseFloat(v.toFixed(2)))
+  };
+};
+
+/**
+ * MAIN PIPELINE: Processes PDF, generates 512-dim Voyage embeddings + BM25 sparse vectors,
+ * and upserts them to your dotproduct Pinecone index.
+ */
+const processDocument = async (doc) => {
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`[STEP 1] DOCUMENT UPLOAD PIPELINE STARTED`);
+  console.log(`[STEP 1] Title    : ${doc.title}`);
+  console.log(`[STEP 1] Doc ID   : ${doc._id}`);
+  console.log(`${"=".repeat(50)}`);
+
+  // Steps 2 & 3: Extract text from PDF
+  const rawText = await extractTextFromPDF(doc.fileUrl);
+
+  // Step 4: Chunking
+  console.log(`\n[STEP 4] Starting chunking process...`);
+  const allChunks = chunkText(cleanText(rawText));
+  const chunks = allChunks.filter(c => c.trim().length > 0);
+  const totalChunks = chunks.length;
+
+  if (totalChunks === 0) {
+    console.error(`[STEP 4] ERROR: No valid chunks produced. Aborting.`);
+    return;
+  }
+
+  // Steps 5 & 6: Embed + Upsert with Hybrid Logic
+  const BATCH_SIZE = 3;
+  const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
+  let totalUploaded = 0;
+
+  for (let i = 0; i < totalChunks; i += BATCH_SIZE) {
+    const batch = chunks.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+
+    console.log(`\n[STEP 5] Generating 512-dim Voyage embeddings for batch ${batchNum}/${totalBatches}...`);
+    const embeddings = await generateEmbeddingsBatch(batch);
+
+    const records = embeddings.map((values, j) => {
+      const chunkIdx = i + j;
+      const recordId = `${doc._id}-chunk-${chunkIdx}`;
+      
+      // CRITICAL: Generate the sparse values for this specific chunk for Hybrid Search
+      const sparseValues = generateSparseVector(batch[j]);
+
+      return {
+        id: recordId,
+        values, // Voyage-3-lite Dense Vector (512 dims)
+        sparseValues, // BM25 Sparse Vector
+        metadata: {
+          docId: doc._id.toString(),
+          title: doc.title,
+          authority: doc.authority,
+          docType: doc.docType,
+          year: doc.year ? doc.year.toString() : "N/A",
+          chunkIndex: chunkIdx,
+          text: batch[j],
+        },
+      };
+    });
+
+    // Upsert to the dotproduct index
+    await getIndex().upsert({ records });
+    totalUploaded += batch.length;
+    console.log(`[STEP 6] ✅ Batch ${batchNum} stored in Pinecone with Hybrid Vectors.`);
+
+    if (i + BATCH_SIZE < totalChunks) {
+      console.log(`[WAIT] Voyage free tier rate limiting — waiting 25s...`);
+      await sleep(25000);
+    }
+  }
+
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`[DONE] PIPELINE COMPLETE | Total chunks: ${totalUploaded}`);
+  console.log(`${"=".repeat(50)}\n`);
+};
 /* SPLIT TEXT INTO CHUNKS */
 const chunkText = (text, chunkSize = 100) => {
   const words = text.split(/\s+/);
@@ -97,86 +198,7 @@ const generateEmbedding = async (text) => {
   return embedding;
 };
 
-const processDocument = async (doc) => {
-  console.log(`\n${"=".repeat(50)}`);
-  console.log(`[STEP 1] DOCUMENT UPLOAD PIPELINE STARTED`);
-  console.log(`[STEP 1] Title    : ${doc.title}`);
-  console.log(`[STEP 1] Doc ID   : ${doc._id}`);
-  console.log(`[STEP 1] Authority: ${doc.authority}`);
-  console.log(`[STEP 1] DocType  : ${doc.docType}`);
-  console.log(`[STEP 1] Year     : ${doc.year}`);
-  console.log(`${"=".repeat(50)}`);
 
-  // Steps 2 & 3 happen inside extractTextFromPDF
-  const rawText = await extractTextFromPDF(doc.fileUrl);
-
-  // Step 4: Chunking
-  console.log(`\n[STEP 4] Starting chunking process...`);
-  const allChunks = chunkText(cleanText(rawText));
-  const chunks = allChunks.filter(c => c.trim().length > 0);
-  const totalChunks = chunks.length;
-  console.log(`[STEP 4] Total words in document : ${rawText.split(/\s+/).length}`);
-  console.log(`[STEP 4] Total chunks created    : ${totalChunks}`);
-  chunks.forEach((chunk, idx) => {
-    console.log(`[STEP 4] Chunk ${String(idx + 1).padStart(3, "0")} | ${chunk.split(/\s+/).length} words | ${chunk.length} chars | "${chunk.substring(0, 60).replace(/\n/g, " ")}..."`);
-  });
-
-  if (totalChunks === 0) {
-    console.error(`[STEP 4] ERROR: No valid chunks produced. Aborting.`);
-    return;
-  }
-
-  // Steps 5 & 6: Embed + Upsert
-  const BATCH_SIZE = 3;
-  const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
-  let totalUploaded = 0;
-
-  console.log(`\n[STEP 5] Starting embedding + Pinecone upload...`);
-  console.log(`[STEP 5] Batch size: ${BATCH_SIZE} | Total batches: ${totalBatches}`);
-
-  for (let i = 0; i < totalChunks; i += BATCH_SIZE) {
-    const batch = chunks.slice(i, i + BATCH_SIZE);
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-
-    console.log(`\n[STEP 5] Generating embeddings for batch ${batchNum}/${totalBatches} (chunks ${i + 1}–${Math.min(i + BATCH_SIZE, totalChunks)})...`);
-    const embeddings = await generateEmbeddingsBatch(batch);
-    console.log(`[STEP 5] Embeddings generated. Vector dims: ${embeddings[0]?.length}`);
-
-    const records = embeddings.map((values, j) => {
-      const chunkIdx = i + j;
-      const recordId = `${doc._id}-chunk-${chunkIdx}`;
-      console.log(`[STEP 6] Uploading chunk ${chunkIdx + 1}/${totalChunks} to Pinecone | Record ID: ${recordId}`);
-      return {
-        id: recordId,
-        values,
-        metadata: {
-          docId: doc._id.toString(),
-          title: doc.title,
-          authority: doc.authority,
-          docType: doc.docType,
-          year: doc.year ? doc.year.toString() : "N/A",
-          chunkIndex: chunkIdx,
-          text: batch[j],
-        },
-      };
-    });
-
-    await getIndex().upsert({ records });
-    totalUploaded += batch.length;
-    console.log(`[STEP 6] ✅ Batch ${batchNum}/${totalBatches} stored in Pinecone. Total uploaded so far: ${totalUploaded}/${totalChunks}`);
-
-    if (i + BATCH_SIZE < totalChunks) {
-      console.log(`[WAIT] Voyage free tier (3 RPM) — waiting 25s before next batch...`);
-      await sleep(25000);
-    }
-  }
-
-  console.log(`\n${"=".repeat(50)}`);
-  console.log(`[DONE] PIPELINE COMPLETE`);
-  console.log(`[DONE] Document  : ${doc.title}`);
-  console.log(`[DONE] Total chunks uploaded to Pinecone: ${totalUploaded}`);
-  console.log(`${"=".repeat(50)}\n`);
-};
 
 /* QUERY DOCUMENTS */
 const queryDocuments = async (question) => {
