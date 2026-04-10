@@ -278,37 +278,28 @@ app.post("/api/officer/search", async (req, res) => {
   if (!queryText?.trim()) return res.status(400).json({ message: "Query text is required" });
 
   try {
-    const denseVector = await getEmbedding(queryText); 
-    const sparseVector = generateSparseVector(queryText); 
-    /**
-     * ALPHA WEIGHTING (0.0 to 1.0)
-     * 0.7 means 70% weight to Keywords (Sparse) and 30% to Meaning (Dense).
-     * This ensures 'IGNOU' or 'Demands for Grants' pushes the right doc to #1.
-     */
-    const alpha = 0.7;
-const weightedDense = denseVector.map(v => v * (1 - alpha));
-    
-    // Scale Sparse Vector
+    const denseVector = await getEmbedding(queryText);
+    const sparseVector = generateSparseVector(queryText);
+
+    // Hybrid search: balance semantic (dense) and keyword (sparse) matching
+    // Alpha = 0.3 means 30% keyword weight, 70% semantic weight
+    const alpha = 0.3;
+    const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
       indices: sparseVector.indices,
-      values: sparseVector.values.map(v => v * alpha * 5.0) // 5.0 is a booster for sparse magnitude
+      values: sparseVector.values.map(v => v * alpha)
     };
-    /**
-     * FIX 1: HYBRID WEIGHTING
-     * Multiply sparse values by 1.5 to 2.0 to favor exact keyword matches 
-     * like "IGNOU" or "Demands for Grants" over general semantic meaning.
-     */
-    sparseVector.values = sparseVector.values.map(v => v * 2.5); 
 
     const index = getPineconeIndex();
 
     const queryResponse = await index.query({
       vector: weightedDense,
       sparseVector: weightedSparse,
-      topK: 12,
+      topK: 15,
       includeMetadata: true
     });
 
+    // Get best chunk per document
     const bestChunkPerDoc = new Map();
     for (const m of queryResponse.matches) {
       const docId = m.metadata?.docId;
@@ -321,6 +312,7 @@ const weightedDense = denseVector.map(v => v * (1 - alpha));
     const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName");
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
+    // Process and score documents
     const enriched = uniqueDocIds.map(docId => {
       const m = bestChunkPerDoc.get(docId);
       const dbDoc = docMap[docId];
@@ -330,16 +322,20 @@ const weightedDense = denseVector.map(v => v * (1 - alpha));
       const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
       const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
       const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
-      
+
       const excerpt = (nonAsciiRatio > 0.3 || realWordRatio < 0.25)
         ? "[Content in multiple languages. View full document for details.]"
         : rawExcerpt;
+
+      // Better score normalization: use raw score directly with scaling
+      // Pinecone hybrid scores typically range from 0 to ~2.0
       const rawScore = m.score;
-      const normalizedScore = 1 / (1 + Math.exp(-rawScore / 10));
+      const normalizedScore = Math.min(rawScore / 2.0, 1.0); // Scale to 0-1 range
 
       return {
         _id: docId,
         score: normalizedScore,
+        rawScore: rawScore,
         title: m.metadata.title,
         authority: m.metadata.authority,
         year: m.metadata.year,
@@ -348,14 +344,29 @@ const weightedDense = denseVector.map(v => v * (1 - alpha));
         fileUrl: dbDoc.fileUrl || null,
         fileName: dbDoc.fileName || null,
       };
-    }).filter(Boolean).sort((a, b) => b.score - a.score);
-    const THRESHOLD = 0.55; // tune this (0.5–0.7 ideal)
+    }).filter(Boolean).sort((a, b) => b.rawScore - a.rawScore);
 
-const filtered = enriched.filter(doc => doc.score >= THRESHOLD);
+    // Apply relevance threshold - only show documents with meaningful relevance
+    const RELEVANCE_THRESHOLD = 0.35; // 35% minimum relevance
+    const filtered = enriched.filter(doc => doc.score >= RELEVANCE_THRESHOLD);
+
+    // Calculate relative scores to show differentiation
+    if (filtered.length > 0) {
+      const maxScore = filtered[0].rawScore;
+      const minScore = filtered[filtered.length - 1].rawScore;
+      const scoreRange = maxScore - minScore || 1;
+
+      filtered.forEach(doc => {
+        // Redistribute scores to show clear differentiation
+        const relativeScore = (doc.rawScore - minScore) / scoreRange;
+        doc.score = 0.5 + (relativeScore * 0.5); // Map to 50-100% range
+      });
+    }
+
     await new QueryHistory({
       queryText,
-      topDocumentTitle: enriched[0]?.title || "N/A",
-      results: enriched,
+      topDocumentTitle: filtered[0]?.title || "N/A",
+      results: filtered,
     }).save();
 
     res.json({ documents: filtered });
