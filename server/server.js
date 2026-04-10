@@ -282,12 +282,13 @@ app.post("/api/officer/search", async (req, res) => {
     const sparseVector = generateSparseVector(queryText);
 
     // Hybrid search: balance semantic (dense) and keyword (sparse) matching
-    // Alpha = 0.3 means 30% keyword weight, 70% semantic weight
-    const alpha = 0.3;
+    // Alpha = 0.6 means 60% keyword weight, 40% semantic weight
+    // Higher keyword weight ensures specific terms like "MMTTC" have strong impact
+    const alpha = 0.6;
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
       indices: sparseVector.indices,
-      values: sparseVector.values.map(v => v * alpha)
+      values: sparseVector.values.map(v => v * alpha * 3.0) // Boost sparse for keyword matching
     };
 
     const index = getPineconeIndex();
@@ -309,8 +310,13 @@ app.post("/api/officer/search", async (req, res) => {
     }
 
     const uniqueDocIds = Array.from(bestChunkPerDoc.keys());
-    const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName");
+    const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName title");
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
+
+    // Extract key terms from query (acronyms, capitalized words, important keywords)
+    const queryTerms = queryText.toLowerCase().match(/\b[a-z]{3,}\b/g) || [];
+    const queryAcronyms = queryText.match(/\b[A-Z]{2,}\b/g) || [];
+    const allQueryTerms = [...queryTerms, ...queryAcronyms.map(a => a.toLowerCase())];
 
     // Process and score documents
     const enriched = uniqueDocIds.map(docId => {
@@ -327,10 +333,27 @@ app.post("/api/officer/search", async (req, res) => {
         ? "[Content in multiple languages. View full document for details.]"
         : rawExcerpt;
 
-      // Better score normalization: use raw score directly with scaling
-      // Pinecone hybrid scores typically range from 0 to ~2.0
-      const rawScore = m.score;
-      const normalizedScore = Math.min(rawScore / 2.0, 1.0); // Scale to 0-1 range
+      // Calculate keyword match bonus
+      const titleLower = (m.metadata.title || "").toLowerCase();
+      const excerptLower = rawExcerpt.toLowerCase();
+
+      let keywordBonus = 0;
+      allQueryTerms.forEach(term => {
+        if (term.length < 3) return;
+        // Strong boost for title matches
+        if (titleLower.includes(term)) keywordBonus += 0.3;
+        // Moderate boost for excerpt matches
+        if (excerptLower.includes(term)) keywordBonus += 0.1;
+      });
+
+      // Extra boost for acronym matches (like MMTTC)
+      queryAcronyms.forEach(acronym => {
+        if (titleLower.includes(acronym.toLowerCase())) keywordBonus += 0.5;
+        if (excerptLower.includes(acronym.toLowerCase())) keywordBonus += 0.2;
+      });
+
+      const rawScore = m.score + keywordBonus;
+      const normalizedScore = Math.min(rawScore / 2.5, 1.0);
 
       return {
         _id: docId,
@@ -346,20 +369,21 @@ app.post("/api/officer/search", async (req, res) => {
       };
     }).filter(Boolean).sort((a, b) => b.rawScore - a.rawScore);
 
-    // Apply relevance threshold - only show documents with meaningful relevance
-    const RELEVANCE_THRESHOLD = 0.35; // 35% minimum relevance
+    // Apply relevance threshold
+    const RELEVANCE_THRESHOLD = 0.30;
     const filtered = enriched.filter(doc => doc.score >= RELEVANCE_THRESHOLD);
 
-    // Calculate relative scores to show differentiation
+    // Better score display: preserve actual differences, don't artificially inflate
     if (filtered.length > 0) {
-      const maxScore = filtered[0].rawScore;
-      const minScore = filtered[filtered.length - 1].rawScore;
-      const scoreRange = maxScore - minScore || 1;
+      const maxRawScore = filtered[0].rawScore;
 
       filtered.forEach(doc => {
-        // Redistribute scores to show clear differentiation
-        const relativeScore = (doc.rawScore - minScore) / scoreRange;
-        doc.score = 0.5 + (relativeScore * 0.5); // Map to 50-100% range
+        // Show percentage relative to best match, but cap at 100%
+        const percentOfBest = (doc.rawScore / maxRawScore);
+        doc.score = Math.min(percentOfBest, 1.0);
+
+        // Apply minimum gap: if score difference is significant, show it
+        if (doc.score < 0.5) doc.score = doc.score * 0.8; // Reduce low scores further
       });
     }
 
