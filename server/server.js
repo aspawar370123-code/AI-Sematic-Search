@@ -278,9 +278,21 @@ app.post("/api/officer/search", async (req, res) => {
   if (!queryText?.trim()) return res.status(400).json({ message: "Query text is required" });
 
   try {
-    const vector = await getEmbedding(queryText); 
+    const denseVector = await getEmbedding(queryText); 
     const sparseVector = generateSparseVector(queryText); 
-
+    /**
+     * ALPHA WEIGHTING (0.0 to 1.0)
+     * 0.7 means 70% weight to Keywords (Sparse) and 30% to Meaning (Dense).
+     * This ensures 'IGNOU' or 'Demands for Grants' pushes the right doc to #1.
+     */
+    const alpha = 0.7;
+const weightedDense = denseVector.map(v => v * (1 - alpha));
+    
+    // Scale Sparse Vector
+    const weightedSparse = {
+      indices: sparseVector.indices,
+      values: sparseVector.values.map(v => v * alpha * 5.0) // 5.0 is a booster for sparse magnitude
+    };
     /**
      * FIX 1: HYBRID WEIGHTING
      * Multiply sparse values by 1.5 to 2.0 to favor exact keyword matches 
@@ -291,8 +303,8 @@ app.post("/api/officer/search", async (req, res) => {
     const index = getPineconeIndex();
 
     const queryResponse = await index.query({
-      vector,
-      sparseVector,
+      vector: weightedDense,
+      sparseVector: weightedSparse,
       topK: 12,
       includeMetadata: true
     });
