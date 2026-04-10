@@ -152,10 +152,14 @@ const generateEmbedding = async (text) => {
 };
 
 /* QUERY DOCUMENTS */
+/* QUERY DOCUMENTS */
 const queryDocuments = async (question) => {
   const questionEmbedding = await generateEmbedding(question);
+  const sparseQuery = generateSparseVector(question); // ← ADD: BM25 for query
+
   const results = await getIndex().query({
     vector: questionEmbedding,
+    sparseVector: sparseQuery,  // ← ADD: hybrid query
     topK: 5,
     includeMetadata: true,
   });
@@ -164,11 +168,20 @@ const queryDocuments = async (question) => {
     return { answer: "No relevant documents found.", sources: [] };
   }
 
-  const context = results.matches
+  // ← ADD: filter low-relevance results (tune 0.75 as needed)
+  const relevantMatches = results.matches.filter(m => m.score >= 0.75);
+
+  if (relevantMatches.length === 0) {
+    return { answer: "No sufficiently relevant documents found.", sources: [] };
+  }
+
+  const context = relevantMatches  // ← CHANGE: was results.matches
     .map((m) => `[${m.metadata.title}]:\n${m.metadata.text}`)
     .join("\n\n");
 
-  const sources = [...new Map(results.matches.map((m) => [m.metadata.docId, { title: m.metadata.title }])).values()];
+  const sources = [...new Map(
+    relevantMatches.map((m) => [m.metadata.docId, { title: m.metadata.title }]) // ← CHANGE
+  ).values()];
 
   const completion = await ai.generateContent({
     contents: [{ role: "user", parts: [{ text: `Context:\n${context}\n\nQuestion: ${question}` }] }],
