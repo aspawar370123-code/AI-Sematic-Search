@@ -24,18 +24,15 @@ function cleanText(text) {
     .replace(/[\u0000-\u001F]/g, " ")
     .trim();
 }
-
-/**
- * HELPER: Generates a sparse vector for Hybrid Search (BM25 logic).
- */
+const tokenizer = new natural.WordTokenizer();
 const generateSparseVector = (text) => {
-  const words = text.toLowerCase().match(/\w+/g) || [];
+  const words = tokenizer.tokenize(text.toLowerCase()) || [];
   const counts = {};
   words.forEach(word => {
     let hash = 0;
     for (let i = 0; i < word.length; i++) {
       hash = ((hash << 5) - hash) + word.charCodeAt(i);
-      hash |= 0; 
+      hash |= 0; // Convert to 32-bit integer
     }
     const index = Math.abs(hash) % 1000000;
     counts[index] = (counts[index] || 0) + 1;
