@@ -335,7 +335,7 @@ const weightedDense = denseVector.map(v => v * (1 - alpha));
         ? "[Content in multiple languages. View full document for details.]"
         : rawExcerpt;
       const rawScore = m.score;
-      const normalizedScore = Math.min(Math.max(rawScore / 35.0, 0), 1);
+      const normalizedScore = 1 / (1 + Math.exp(-rawScore / 10));
 
       return {
         _id: docId,
@@ -349,14 +349,16 @@ const weightedDense = denseVector.map(v => v * (1 - alpha));
         fileName: dbDoc.fileName || null,
       };
     }).filter(Boolean).sort((a, b) => b.score - a.score);
+    const THRESHOLD = 0.55; // tune this (0.5–0.7 ideal)
 
+const filtered = enriched.filter(doc => doc.score >= THRESHOLD);
     await new QueryHistory({
       queryText,
       topDocumentTitle: enriched[0]?.title || "N/A",
       results: enriched,
     }).save();
 
-    res.json({ documents: enriched });
+    res.json({ documents: filtered });
   } catch (error) {
     console.error("Search error:", error);
     res.status(500).json({ message: "Search failed", error: error.message });
