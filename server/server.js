@@ -273,14 +273,20 @@ const generateSparseVector = (text) => {
   };
 };
 
-/* Corrected Search Route - Add to server.js */
 app.post("/api/officer/search", async (req, res) => {
   const { queryText } = req.body;
   if (!queryText?.trim()) return res.status(400).json({ message: "Query text is required" });
 
   try {
-    const vector = await getEmbedding(queryText); // Returns 512 dims for voyage-3-lite
+    const vector = await getEmbedding(queryText); 
     const sparseVector = generateSparseVector(queryText); 
+
+    /**
+     * FIX 1: HYBRID WEIGHTING
+     * Multiply sparse values by 1.5 to 2.0 to favor exact keyword matches 
+     * like "IGNOU" or "Demands for Grants" over general semantic meaning.
+     */
+    sparseVector.values = sparseVector.values.map(v => v * 1.8); 
 
     const index = getPineconeIndex();
 
@@ -304,21 +310,20 @@ app.post("/api/officer/search", async (req, res) => {
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
     const enriched = uniqueDocIds.map(docId => {
-  const m = bestChunkPerDoc.get(docId);
-  const dbDoc = docMap[docId];
-  if (!dbDoc) return null;
+      const m = bestChunkPerDoc.get(docId);
+      const dbDoc = docMap[docId];
+      if (!dbDoc) return null;
 
-  const rawExcerpt = m.metadata.text || "";
-  const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
-  const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
-  const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
-  
-  const excerpt = (nonAsciiRatio > 0.3 || realWordRatio < 0.25)
-    ? "[Content in multiple languages. View full document for details.]"
-    : rawExcerpt;
-
-    const rawScore = m.score;
-  const normalizedScore = Math.min(Math.max(rawScore / 25.0, 0), 1);
+      const rawExcerpt = m.metadata.text || "";
+      const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
+      const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
+      const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
+      
+      const excerpt = (nonAsciiRatio > 0.3 || realWordRatio < 0.25)
+        ? "[Content in multiple languages. View full document for details.]"
+        : rawExcerpt;
+      const rawScore = m.score;
+      const normalizedScore = Math.min(Math.max(rawScore / 35.0, 0), 1);
 
       return {
         _id: docId,
