@@ -304,22 +304,25 @@ app.post("/api/officer/search", async (req, res) => {
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
     const enriched = uniqueDocIds.map(docId => {
-      const m = bestChunkPerDoc.get(docId);
-      const dbDoc = docMap[docId];
-      if (!dbDoc) return null;
+  const m = bestChunkPerDoc.get(docId);
+  const dbDoc = docMap[docId];
+  if (!dbDoc) return null;
 
-      const rawExcerpt = m.metadata.text || "";
-      const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
-      const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
-      const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
-      
-      const excerpt = (nonAsciiRatio > 0.3 || realWordRatio < 0.25)
-        ? "[Content in multiple languages. View full document for details.]"
-        : rawExcerpt;
+  const rawExcerpt = m.metadata.text || "";
+  const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
+  const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
+  const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
+  
+  const excerpt = (nonAsciiRatio > 0.3 || realWordRatio < 0.25)
+    ? "[Content in multiple languages. View full document for details.]"
+    : rawExcerpt;
+
+    const rawScore = m.score;
+  const normalizedScore = Math.min(Math.max(rawScore / 25.0, 0), 1);
 
       return {
         _id: docId,
-        score: m.score,
+        score: normalizedScore,
         title: m.metadata.title,
         authority: m.metadata.authority,
         year: m.metadata.year,
