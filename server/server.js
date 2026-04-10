@@ -286,7 +286,7 @@ app.post("/api/officer/search", async (req, res) => {
      * Multiply sparse values by 1.5 to 2.0 to favor exact keyword matches 
      * like "IGNOU" or "Demands for Grants" over general semantic meaning.
      */
-    sparseVector.values = sparseVector.values.map(v => v * 1.8); 
+    sparseVector.values = sparseVector.values.map(v => v * 2.5); 
 
     const index = getPineconeIndex();
 
