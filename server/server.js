@@ -313,10 +313,32 @@ app.post("/api/officer/search", async (req, res) => {
     const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName title");
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
-    // Extract key terms from query (acronyms, capitalized words, important keywords)
-    const queryTerms = queryText.toLowerCase().match(/\b[a-z]{3,}\b/g) || [];
-    const queryAcronyms = queryText.match(/\b[A-Z]{2,}\b/g) || [];
-    const allQueryTerms = [...queryTerms, ...queryAcronyms.map(a => a.toLowerCase())];
+    // Extract entity names and key terms from query
+    // Entity = proper nouns, scheme names, program names (capitalized sequences)
+    const queryLower = queryText.toLowerCase();
+    const queryWords = queryText.match(/\b[A-Z][a-z]+\b/g) || []; // Capitalized words like "Malaviya", "Mission"
+    const queryAcronyms = queryText.match(/\b[A-Z]{2,}\b/g) || []; // Acronyms like "MMTTC", "PM"
+
+    // Identify entity phrases (2-4 consecutive capitalized words = likely a scheme/program name)
+    const entityPhrases = [];
+    const words = queryText.split(/\s+/);
+    for (let i = 0; i < words.length; i++) {
+      let phrase = [];
+      let j = i;
+      while (j < words.length && /^[A-Z]/.test(words[j]) && j - i < 4) {
+        phrase.push(words[j]);
+        j++;
+      }
+      if (phrase.length >= 2) {
+        entityPhrases.push(phrase.join(' ').toLowerCase());
+        i = j - 1;
+      }
+    }
+
+    // Extract important unique words (filter out common words)
+    const commonWords = new Set(['what', 'is', 'the', 'are', 'for', 'of', 'in', 'to', 'and', 'or', 'how', 'about', 'scheme', 'programme', 'program', 'guidelines', 'policy', 'document']);
+    const importantTerms = queryLower.match(/\b[a-z]{4,}\b/g)?.filter(w => !commonWords.has(w)) || [];
+    const uniqueImportantTerms = [...new Set(importantTerms)];
 
     // Process and score documents
     const enriched = uniqueDocIds.map(docId => {
@@ -333,32 +355,95 @@ app.post("/api/officer/search", async (req, res) => {
         ? "[Content in multiple languages. View full document for details.]"
         : rawExcerpt;
 
-      // Calculate keyword match bonus
       const titleLower = (m.metadata.title || "").toLowerCase();
       const excerptLower = rawExcerpt.toLowerCase();
+      const combinedText = titleLower + " " + excerptLower;
 
-      let keywordBonus = 0;
-      allQueryTerms.forEach(term => {
-        if (term.length < 3) return;
-        // Strong boost for title matches
-        if (titleLower.includes(term)) keywordBonus += 0.3;
-        // Moderate boost for excerpt matches
-        if (excerptLower.includes(term)) keywordBonus += 0.1;
+      // ENTITY MATCHING SCORE (most important)
+      let entityScore = 0;
+      let entityMatchCount = 0;
+
+      // Check for entity phrase matches (e.g., "Malaviya Mission")
+      entityPhrases.forEach(phrase => {
+        if (titleLower.includes(phrase)) {
+          entityScore += 2.0; // Very strong boost for title match
+          entityMatchCount++;
+        } else if (excerptLower.includes(phrase)) {
+          entityScore += 0.8; // Good boost for content match
+          entityMatchCount++;
+        }
       });
 
-      // Extra boost for acronym matches (like MMTTC)
+      // Check for capitalized word matches (scheme name components)
+      let capitalizedWordMatches = 0;
+      queryWords.forEach(word => {
+        const wordLower = word.toLowerCase();
+        if (titleLower.includes(wordLower)) {
+          entityScore += 0.6;
+          capitalizedWordMatches++;
+        } else if (excerptLower.includes(wordLower)) {
+          entityScore += 0.2;
+          capitalizedWordMatches++;
+        }
+      });
+
+      // Check for acronym matches (e.g., "MMTTC")
+      let acronymMatches = 0;
       queryAcronyms.forEach(acronym => {
-        if (titleLower.includes(acronym.toLowerCase())) keywordBonus += 0.5;
-        if (excerptLower.includes(acronym.toLowerCase())) keywordBonus += 0.2;
+        const acronymLower = acronym.toLowerCase();
+        if (titleLower.includes(acronymLower)) {
+          entityScore += 1.5;
+          acronymMatches++;
+        } else if (excerptLower.includes(acronymLower)) {
+          entityScore += 0.5;
+          acronymMatches++;
+        }
       });
 
-      const rawScore = m.score + keywordBonus;
-      const normalizedScore = Math.min(rawScore / 2.5, 1.0);
+      // IMPORTANT TERMS SCORE (secondary)
+      let termsScore = 0;
+      let termsMatchCount = 0;
+      uniqueImportantTerms.forEach(term => {
+        if (titleLower.includes(term)) {
+          termsScore += 0.3;
+          termsMatchCount++;
+        } else if (excerptLower.includes(term)) {
+          termsScore += 0.1;
+          termsMatchCount++;
+        }
+      });
+
+      // PENALTY SYSTEM: Heavily penalize if missing key entities
+      let penalty = 1.0;
+
+      // If query has entity phrases but doc doesn't match ANY, apply heavy penalty
+      if (entityPhrases.length > 0 && entityMatchCount === 0) {
+        penalty *= 0.3; // 70% penalty
+      }
+
+      // If query has capitalized words but doc matches very few, penalize
+      if (queryWords.length >= 2 && capitalizedWordMatches === 0) {
+        penalty *= 0.4; // 60% penalty
+      }
+
+      // If query has acronyms but doc doesn't match, penalize
+      if (queryAcronyms.length > 0 && acronymMatches === 0) {
+        penalty *= 0.5; // 50% penalty
+      }
+
+      // Calculate final score
+      const baseScore = m.score;
+      const bonusScore = entityScore + termsScore;
+      const rawScore = (baseScore + bonusScore) * penalty;
 
       return {
         _id: docId,
-        score: normalizedScore,
+        score: 0,
         rawScore: rawScore,
+        entityMatchCount,
+        capitalizedWordMatches,
+        acronymMatches,
+        penalty,
         title: m.metadata.title,
         authority: m.metadata.authority,
         year: m.metadata.year,
@@ -369,31 +454,60 @@ app.post("/api/officer/search", async (req, res) => {
       };
     }).filter(Boolean).sort((a, b) => b.rawScore - a.rawScore);
 
-    // Apply relevance threshold
-    const RELEVANCE_THRESHOLD = 0.30;
-    const filtered = enriched.filter(doc => doc.score >= RELEVANCE_THRESHOLD);
+    // Apply strict relevance threshold
+    const RELEVANCE_THRESHOLD = 0.5; // Minimum raw score
+    const filtered = enriched.filter(doc => doc.rawScore >= RELEVANCE_THRESHOLD);
 
-    // Better score display: preserve actual differences, don't artificially inflate
+    // Calculate final display scores with realistic distribution
     if (filtered.length > 0) {
-      const maxRawScore = filtered[0].rawScore;
+      const topScore = filtered[0].rawScore;
+      const secondScore = filtered.length > 1 ? filtered[1].rawScore : topScore * 0.5;
 
-      filtered.forEach(doc => {
-        // Show percentage relative to best match, but cap at 100%
-        const percentOfBest = (doc.rawScore / maxRawScore);
-        doc.score = Math.min(percentOfBest, 1.0);
+      filtered.forEach((doc, index) => {
+        if (index === 0) {
+          // Top document: scale to 85-100% based on absolute quality
+          doc.score = Math.min(0.85 + (doc.rawScore / 10), 1.0);
+        } else {
+          // Other documents: relative to top, with significant gap
+          const relativeScore = doc.rawScore / topScore;
 
-        // Apply minimum gap: if score difference is significant, show it
-        if (doc.score < 0.5) doc.score = doc.score * 0.8; // Reduce low scores further
+          // If score is very close to top (>90%), show high score
+          if (relativeScore > 0.90) {
+            doc.score = 0.80 + (relativeScore * 0.15);
+          }
+          // If moderately relevant (70-90%), show medium score
+          else if (relativeScore > 0.70) {
+            doc.score = 0.60 + (relativeScore * 0.20);
+          }
+          // If weakly relevant (<70%), show low score
+          else {
+            doc.score = relativeScore * 0.60;
+          }
+        }
+
+        // Cap at 100%
+        doc.score = Math.min(doc.score, 1.0);
       });
+
+      // Remove documents with very low final scores
+      const finalFiltered = filtered.filter(doc => doc.score >= 0.35);
+
+      await new QueryHistory({
+        queryText,
+        topDocumentTitle: finalFiltered[0]?.title || "N/A",
+        results: finalFiltered,
+      }).save();
+
+      res.json({ documents: finalFiltered });
+    } else {
+      await new QueryHistory({
+        queryText,
+        topDocumentTitle: "N/A",
+        results: [],
+      }).save();
+
+      res.json({ documents: [] });
     }
-
-    await new QueryHistory({
-      queryText,
-      topDocumentTitle: filtered[0]?.title || "N/A",
-      results: filtered,
-    }).save();
-
-    res.json({ documents: filtered });
   } catch (error) {
     console.error("Search error:", error);
     res.status(500).json({ message: "Search failed", error: error.message });
