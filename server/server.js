@@ -281,14 +281,12 @@ app.post("/api/officer/search", async (req, res) => {
     const denseVector = await getEmbedding(queryText);
     const sparseVector = generateSparseVector(queryText);
 
-    // Hybrid search: balance semantic (dense) and keyword (sparse) matching
-    // Alpha = 0.6 means 60% keyword weight, 40% semantic weight
-    // Higher keyword weight ensures specific terms like "MMTTC" have strong impact
-    const alpha = 0.6;
+    // Balanced hybrid: 50-50 semantic and keyword
+    const alpha = 0.5;
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
       indices: sparseVector.indices,
-      values: sparseVector.values.map(v => v * alpha * 3.0) // Boost sparse for keyword matching
+      values: sparseVector.values.map(v => v * alpha)
     };
 
     const index = getPineconeIndex();
@@ -296,7 +294,7 @@ app.post("/api/officer/search", async (req, res) => {
     const queryResponse = await index.query({
       vector: weightedDense,
       sparseVector: weightedSparse,
-      topK: 15,
+      topK: 20,
       includeMetadata: true
     });
 
@@ -313,32 +311,16 @@ app.post("/api/officer/search", async (req, res) => {
     const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName title");
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
-    // Extract entity names and key terms from query
-    // Entity = proper nouns, scheme names, program names (capitalized sequences)
+    // Extract meaningful terms from query
     const queryLower = queryText.toLowerCase();
-    const queryWords = queryText.match(/\b[A-Z][a-z]+\b/g) || []; // Capitalized words like "Malaviya", "Mission"
-    const queryAcronyms = queryText.match(/\b[A-Z]{2,}\b/g) || []; // Acronyms like "MMTTC", "PM"
+    const commonWords = new Set(['what', 'are', 'the', 'for', 'how', 'when', 'where', 'who', 'which', 'does', 'can', 'will', 'about', 'from', 'with', 'this', 'that', 'have', 'been', 'their', 'would', 'there', 'could', 'should']);
+    const allWords = queryLower.match(/\b[a-z]+\b/g) || [];
+    const meaningfulWords = allWords.filter(w => w.length >= 3 && !commonWords.has(w));
 
-    // Identify entity phrases (2-4 consecutive capitalized words = likely a scheme/program name)
-    const entityPhrases = [];
-    const words = queryText.split(/\s+/);
-    for (let i = 0; i < words.length; i++) {
-      let phrase = [];
-      let j = i;
-      while (j < words.length && /^[A-Z]/.test(words[j]) && j - i < 4) {
-        phrase.push(words[j]);
-        j++;
-      }
-      if (phrase.length >= 2) {
-        entityPhrases.push(phrase.join(' ').toLowerCase());
-        i = j - 1;
-      }
-    }
-
-    // Extract important unique words (filter out common words)
-    const commonWords = new Set(['what', 'is', 'the', 'are', 'for', 'of', 'in', 'to', 'and', 'or', 'how', 'about', 'scheme', 'programme', 'program', 'guidelines', 'policy', 'document']);
-    const importantTerms = queryLower.match(/\b[a-z]{4,}\b/g)?.filter(w => !commonWords.has(w)) || [];
-    const uniqueImportantTerms = [...new Set(importantTerms)];
+    // Identify key entities (capitalized words and acronyms)
+    const capitalizedWords = queryText.match(/\b[A-Z][a-z]+\b/g) || [];
+    const acronyms = queryText.match(/\b[A-Z]{2,}\b/g) || [];
+    const keyEntities = [...capitalizedWords, ...acronyms].map(e => e.toLowerCase());
 
     // Process and score documents
     const enriched = uniqueDocIds.map(docId => {
@@ -357,93 +339,55 @@ app.post("/api/officer/search", async (req, res) => {
 
       const titleLower = (m.metadata.title || "").toLowerCase();
       const excerptLower = rawExcerpt.toLowerCase();
-      const combinedText = titleLower + " " + excerptLower;
 
-      // ENTITY MATCHING SCORE (most important)
-      let entityScore = 0;
+      // Calculate term coverage
+      let termMatchCount = 0;
+      meaningfulWords.forEach(word => {
+        if (titleLower.includes(word) || excerptLower.includes(word)) {
+          termMatchCount++;
+        }
+      });
+      const termCoverage = meaningfulWords.length > 0 ? termMatchCount / meaningfulWords.length : 0;
+
+      // Calculate entity coverage
       let entityMatchCount = 0;
-
-      // Check for entity phrase matches (e.g., "Malaviya Mission")
-      entityPhrases.forEach(phrase => {
-        if (titleLower.includes(phrase)) {
-          entityScore += 2.0; // Very strong boost for title match
-          entityMatchCount++;
-        } else if (excerptLower.includes(phrase)) {
-          entityScore += 0.8; // Good boost for content match
+      keyEntities.forEach(entity => {
+        if (titleLower.includes(entity) || excerptLower.includes(entity)) {
           entityMatchCount++;
         }
       });
+      const entityCoverage = keyEntities.length > 0 ? entityMatchCount / keyEntities.length : 1;
 
-      // Check for capitalized word matches (scheme name components)
-      let capitalizedWordMatches = 0;
-      queryWords.forEach(word => {
-        const wordLower = word.toLowerCase();
-        if (titleLower.includes(wordLower)) {
-          entityScore += 0.6;
-          capitalizedWordMatches++;
-        } else if (excerptLower.includes(wordLower)) {
-          entityScore += 0.2;
-          capitalizedWordMatches++;
-        }
-      });
-
-      // Check for acronym matches (e.g., "MMTTC")
-      let acronymMatches = 0;
-      queryAcronyms.forEach(acronym => {
-        const acronymLower = acronym.toLowerCase();
-        if (titleLower.includes(acronymLower)) {
-          entityScore += 1.5;
-          acronymMatches++;
-        } else if (excerptLower.includes(acronymLower)) {
-          entityScore += 0.5;
-          acronymMatches++;
-        }
-      });
-
-      // IMPORTANT TERMS SCORE (secondary)
-      let termsScore = 0;
-      let termsMatchCount = 0;
-      uniqueImportantTerms.forEach(term => {
-        if (titleLower.includes(term)) {
-          termsScore += 0.3;
-          termsMatchCount++;
-        } else if (excerptLower.includes(term)) {
-          termsScore += 0.1;
-          termsMatchCount++;
-        }
-      });
-
-      // PENALTY SYSTEM: Heavily penalize if missing key entities
-      let penalty = 1.0;
-
-      // If query has entity phrases but doc doesn't match ANY, apply heavy penalty
-      if (entityPhrases.length > 0 && entityMatchCount === 0) {
-        penalty *= 0.3; // 70% penalty
-      }
-
-      // If query has capitalized words but doc matches very few, penalize
-      if (queryWords.length >= 2 && capitalizedWordMatches === 0) {
-        penalty *= 0.4; // 60% penalty
-      }
-
-      // If query has acronyms but doc doesn't match, penalize
-      if (queryAcronyms.length > 0 && acronymMatches === 0) {
-        penalty *= 0.5; // 50% penalty
-      }
-
-      // Calculate final score
+      // Start with Pinecone's base score
       const baseScore = m.score;
-      const bonusScore = entityScore + termsScore;
-      const rawScore = (baseScore + bonusScore) * penalty;
+      let adjustedScore = baseScore;
+
+      // Apply penalties based on coverage
+      if (keyEntities.length > 0) {
+        // If query has specific entities, require good entity coverage
+        if (entityCoverage < 0.3) {
+          adjustedScore *= 0.2; // 80% penalty
+        } else if (entityCoverage < 0.5) {
+          adjustedScore *= 0.5; // 50% penalty
+        } else if (entityCoverage < 0.7) {
+          adjustedScore *= 0.75; // 25% penalty
+        }
+      }
+
+      // Require reasonable term coverage
+      if (termCoverage < 0.25) {
+        adjustedScore *= 0.3; // 70% penalty
+      } else if (termCoverage < 0.4) {
+        adjustedScore *= 0.6; // 40% penalty
+      }
 
       return {
         _id: docId,
         score: 0,
-        rawScore: rawScore,
-        entityMatchCount,
-        capitalizedWordMatches,
-        acronymMatches,
-        penalty,
+        rawScore: adjustedScore,
+        baseScore: baseScore,
+        termCoverage: termCoverage,
+        entityCoverage: entityCoverage,
         title: m.metadata.title,
         authority: m.metadata.authority,
         year: m.metadata.year,
@@ -454,60 +398,56 @@ app.post("/api/officer/search", async (req, res) => {
       };
     }).filter(Boolean).sort((a, b) => b.rawScore - a.rawScore);
 
-    // Apply strict relevance threshold
-    const RELEVANCE_THRESHOLD = 0.5; // Minimum raw score
-    const filtered = enriched.filter(doc => doc.rawScore >= RELEVANCE_THRESHOLD);
+    // Filter by minimum threshold
+    const MIN_RAW_SCORE = 1.0;
+    let filtered = enriched.filter(doc => doc.rawScore >= MIN_RAW_SCORE);
 
-    // Calculate final display scores with realistic distribution
-    if (filtered.length > 0) {
-      const topScore = filtered[0].rawScore;
-      const secondScore = filtered.length > 1 ? filtered[1].rawScore : topScore * 0.5;
-
-      filtered.forEach((doc, index) => {
-        if (index === 0) {
-          // Top document: scale to 85-100% based on absolute quality
-          doc.score = Math.min(0.85 + (doc.rawScore / 10), 1.0);
-        } else {
-          // Other documents: relative to top, with significant gap
-          const relativeScore = doc.rawScore / topScore;
-
-          // If score is very close to top (>90%), show high score
-          if (relativeScore > 0.90) {
-            doc.score = 0.80 + (relativeScore * 0.15);
-          }
-          // If moderately relevant (70-90%), show medium score
-          else if (relativeScore > 0.70) {
-            doc.score = 0.60 + (relativeScore * 0.20);
-          }
-          // If weakly relevant (<70%), show low score
-          else {
-            doc.score = relativeScore * 0.60;
-          }
-        }
-
-        // Cap at 100%
-        doc.score = Math.min(doc.score, 1.0);
-      });
-
-      // Remove documents with very low final scores
-      const finalFiltered = filtered.filter(doc => doc.score >= 0.35);
-
-      await new QueryHistory({
-        queryText,
-        topDocumentTitle: finalFiltered[0]?.title || "N/A",
-        results: finalFiltered,
-      }).save();
-
-      res.json({ documents: finalFiltered });
-    } else {
+    if (filtered.length === 0) {
       await new QueryHistory({
         queryText,
         topDocumentTitle: "N/A",
         results: [],
       }).save();
 
-      res.json({ documents: [] });
+      return res.json({ documents: [] });
     }
+
+    // Calculate display scores
+    const topRawScore = filtered[0].rawScore;
+
+    filtered.forEach((doc, index) => {
+      const relativeScore = doc.rawScore / topRawScore;
+
+      if (index === 0) {
+        // Top result: 85-100%
+        doc.score = Math.max(0.85, Math.min(doc.rawScore / 3.5, 1.0));
+      } else {
+        // Other results: scale with clear gaps
+        if (relativeScore >= 0.95) {
+          doc.score = 0.80 + (relativeScore * 0.15);
+        } else if (relativeScore >= 0.80) {
+          doc.score = 0.65 + (relativeScore * 0.20);
+        } else if (relativeScore >= 0.60) {
+          doc.score = 0.50 + (relativeScore * 0.20);
+        } else {
+          doc.score = relativeScore * 0.55;
+        }
+      }
+
+      doc.score = Math.min(doc.score, 1.0);
+    });
+
+    // Final filter: remove < 40%
+    filtered = filtered.filter(doc => doc.score >= 0.40);
+    filtered = filtered.slice(0, 10);
+
+    await new QueryHistory({
+      queryText,
+      topDocumentTitle: filtered[0]?.title || "N/A",
+      results: filtered,
+    }).save();
+
+    res.json({ documents: filtered });
   } catch (error) {
     console.error("Search error:", error);
     res.status(500).json({ message: "Search failed", error: error.message });
