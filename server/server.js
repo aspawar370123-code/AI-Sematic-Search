@@ -281,9 +281,9 @@ app.post("/api/officer/search", async (req, res) => {
     const denseVector = await getEmbedding(queryText);
     const sparseVector = generateSparseVector(queryText);
 
-    // 1. Favor Keywords: alpha 0.7 gives 70% weight to exact word matches (BM25)
-    // and 30% to semantic similarity. This helps distinguish "NAAC" from "Teacher Training".
-    const alpha = 0.7;
+    // 1. High Alpha for Precision: Using 0.8 weight for keywords to ensure
+    // specific terms like "grants" take priority over general "UGC" context.
+    const alpha = 0.8; 
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
       indices: sparseVector.indices,
@@ -298,7 +298,6 @@ app.post("/api/officer/search", async (req, res) => {
       includeMetadata: true
     });
 
-    // Get best chunk per document
     const bestChunkPerDoc = new Map();
     for (const m of queryResponse.matches) {
       const docId = m.metadata?.docId;
@@ -311,15 +310,11 @@ app.post("/api/officer/search", async (req, res) => {
     const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName title");
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
-    // Extract meaningful terms and entities (like "NAAC", "UGC", "AICTE")
+    // Identify "Hard" keywords (Subject of the query)
     const queryLower = queryText.toLowerCase();
-    const commonWords = new Set(['what', 'are', 'the', 'for', 'how', 'when', 'where', 'who', 'which', 'does', 'can', 'will', 'about', 'from', 'with', 'this', 'that', 'have', 'been', 'their', 'would', 'there', 'could', 'should']);
-    const allWords = queryLower.match(/\b[a-z]+\b/g) || [];
-    const meaningfulWords = allWords.filter(w => w.length >= 3 && !commonWords.has(w));
-    
-    const acronyms = queryText.match(/\b[A-Z]{2,}\b/g) || [];
-    const capitalizedWords = queryText.match(/\b[A-Z][a-z]+\b/g) || [];
-    const keyEntities = [...new Set([...acronyms, ...capitalizedWords])].map(e => e.toLowerCase());
+    const subjectKeywords = queryLower.split(' ').filter(word => 
+      word.length > 4 && !['about', 'which', 'under', 'policy'].includes(word)
+    );
 
     const enriched = uniqueDocIds.map(docId => {
       const m = bestChunkPerDoc.get(docId);
@@ -329,23 +324,20 @@ app.post("/api/officer/search", async (req, res) => {
       const titleLower = (m.metadata.title || "").toLowerCase();
       const excerptLower = (m.metadata.text || "").toLowerCase();
 
-      // Calculate Entity Coverage (Critical for NAAC vs Malaviya distinction)
-      let entityMatchCount = 0;
-      keyEntities.forEach(entity => {
-        if (titleLower.includes(entity) || excerptLower.includes(entity)) entityMatchCount++;
+      // 2. Mandatory Subject Match: If "grants" is in query but NOT in doc, 
+      // we apply a severe penalty even if "UGC" is present.
+      let subjectMatchCount = 0;
+      subjectKeywords.forEach(kw => {
+        if (titleLower.includes(kw) || excerptLower.includes(kw)) subjectMatchCount++;
       });
-      const entityCoverage = keyEntities.length > 0 ? entityMatchCount / keyEntities.length : 1;
+      
+      const subjectCoverage = subjectKeywords.length > 0 ? subjectMatchCount / subjectKeywords.length : 1;
 
       let adjustedScore = m.score;
-
-      // 2. Strict Entity Penalty: If the query mentions a specific entity (like NAAC)
-      // and the doc doesn't have it, we slash the score drastically.
-      if (keyEntities.length > 0) {
-        if (entityCoverage === 0) {
-          adjustedScore *= 0.01; // 99% penalty for irrelevant docs
-        } else if (entityCoverage < 0.5) {
-          adjustedScore *= 0.4;  // 60% penalty for partial matches
-        }
+      if (subjectKeywords.length > 0 && subjectCoverage === 0) {
+        adjustedScore *= 0.01; // Drop irrelevant "UGC" noise
+      } else if (subjectCoverage < 0.5) {
+        adjustedScore *= 0.5;
       }
 
       return {
@@ -361,32 +353,18 @@ app.post("/api/officer/search", async (req, res) => {
       };
     }).filter(Boolean).sort((a, b) => b.rawScore - a.rawScore);
 
-    // Filter by threshold
-    const MIN_RAW_SCORE = 1.2;
+    // 3. Score Normalization with 85% Absolute Ceiling
+    const MIN_RAW_SCORE = 1.3;
     let filtered = enriched.filter(doc => doc.rawScore >= MIN_RAW_SCORE);
 
     if (filtered.length === 0) return res.json({ documents: [] });
 
-    // 3. Score Normalization with 85% Cap
-    const topRawScore = filtered[0].rawScore;
     filtered.forEach((doc, index) => {
-      const relativeToTop = doc.rawScore / topRawScore;
-      
-      // We scale the score so that the highest possible value is 0.85
-      // and other results follow logically below that.
-      let finalScore;
-      if (index === 0) {
-        finalScore = 0.85; 
-      } else {
-        finalScore = relativeToTop * 0.80; // Second result will be max 80%
-      }
-
+      // Linear scaling with 0.85 as the absolute max
+      const finalScore = index === 0 ? 0.85 : Math.min(0.85, (doc.rawScore / enriched[0].rawScore) * 0.75);
       doc.score = parseFloat(finalScore.toFixed(2));
     });
 
-    // Final cleanup and save history
-    filtered = filtered.filter(doc => doc.score >= 0.30).slice(0, 10);
-    
     await new QueryHistory({
       queryText,
       topDocumentTitle: filtered[0]?.title || "N/A",
@@ -395,7 +373,6 @@ app.post("/api/officer/search", async (req, res) => {
 
     res.json({ documents: filtered });
   } catch (error) {
-    console.error("Search error:", error);
     res.status(500).json({ message: "Search failed", error: error.message });
   }
 });
