@@ -281,8 +281,9 @@ app.post("/api/officer/search", async (req, res) => {
     const denseVector = await getEmbedding(queryText);
     const sparseVector = generateSparseVector(queryText);
 
-    // Balanced hybrid: 50-50 semantic and keyword
-    const alpha = 0.5;
+    // 1. Favor Keywords: alpha 0.7 gives 70% weight to exact word matches (BM25)
+    // and 30% to semantic similarity. This helps distinguish "NAAC" from "Teacher Training".
+    const alpha = 0.7;
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
       indices: sparseVector.indices,
@@ -290,7 +291,6 @@ app.post("/api/officer/search", async (req, res) => {
     };
 
     const index = getPineconeIndex();
-
     const queryResponse = await index.query({
       vector: weightedDense,
       sparseVector: weightedSparse,
@@ -311,136 +311,82 @@ app.post("/api/officer/search", async (req, res) => {
     const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName title");
     const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
 
-    // Extract meaningful terms from query
+    // Extract meaningful terms and entities (like "NAAC", "UGC", "AICTE")
     const queryLower = queryText.toLowerCase();
     const commonWords = new Set(['what', 'are', 'the', 'for', 'how', 'when', 'where', 'who', 'which', 'does', 'can', 'will', 'about', 'from', 'with', 'this', 'that', 'have', 'been', 'their', 'would', 'there', 'could', 'should']);
     const allWords = queryLower.match(/\b[a-z]+\b/g) || [];
     const meaningfulWords = allWords.filter(w => w.length >= 3 && !commonWords.has(w));
-
-    // Identify key entities (capitalized words and acronyms)
-    const capitalizedWords = queryText.match(/\b[A-Z][a-z]+\b/g) || [];
+    
     const acronyms = queryText.match(/\b[A-Z]{2,}\b/g) || [];
-    const keyEntities = [...capitalizedWords, ...acronyms].map(e => e.toLowerCase());
+    const capitalizedWords = queryText.match(/\b[A-Z][a-z]+\b/g) || [];
+    const keyEntities = [...new Set([...acronyms, ...capitalizedWords])].map(e => e.toLowerCase());
 
-    // Process and score documents
     const enriched = uniqueDocIds.map(docId => {
       const m = bestChunkPerDoc.get(docId);
       const dbDoc = docMap[docId];
       if (!dbDoc) return null;
 
-      const rawExcerpt = m.metadata.text || "";
-      const nonAsciiRatio = (rawExcerpt.match(/[^\x00-\x7F]/g) || []).length / (rawExcerpt.length || 1);
-      const words = rawExcerpt.split(/\s+/).filter(w => w.length > 2);
-      const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
-
-      const excerpt = (nonAsciiRatio > 0.3 || realWordRatio < 0.25)
-        ? "[Content in multiple languages. View full document for details.]"
-        : rawExcerpt;
-
       const titleLower = (m.metadata.title || "").toLowerCase();
-      const excerptLower = rawExcerpt.toLowerCase();
+      const excerptLower = (m.metadata.text || "").toLowerCase();
 
-      // Calculate term coverage
-      let termMatchCount = 0;
-      meaningfulWords.forEach(word => {
-        if (titleLower.includes(word) || excerptLower.includes(word)) {
-          termMatchCount++;
-        }
-      });
-      const termCoverage = meaningfulWords.length > 0 ? termMatchCount / meaningfulWords.length : 0;
-
-      // Calculate entity coverage
+      // Calculate Entity Coverage (Critical for NAAC vs Malaviya distinction)
       let entityMatchCount = 0;
       keyEntities.forEach(entity => {
-        if (titleLower.includes(entity) || excerptLower.includes(entity)) {
-          entityMatchCount++;
-        }
+        if (titleLower.includes(entity) || excerptLower.includes(entity)) entityMatchCount++;
       });
       const entityCoverage = keyEntities.length > 0 ? entityMatchCount / keyEntities.length : 1;
 
-      // Start with Pinecone's base score
-      const baseScore = m.score;
-      let adjustedScore = baseScore;
+      let adjustedScore = m.score;
 
-      // Apply penalties based on coverage
+      // 2. Strict Entity Penalty: If the query mentions a specific entity (like NAAC)
+      // and the doc doesn't have it, we slash the score drastically.
       if (keyEntities.length > 0) {
-        // If query has specific entities, require good entity coverage
-        if (entityCoverage < 0.3) {
-          adjustedScore *= 0.2; // 80% penalty
+        if (entityCoverage === 0) {
+          adjustedScore *= 0.01; // 99% penalty for irrelevant docs
         } else if (entityCoverage < 0.5) {
-          adjustedScore *= 0.5; // 50% penalty
-        } else if (entityCoverage < 0.7) {
-          adjustedScore *= 0.75; // 25% penalty
+          adjustedScore *= 0.4;  // 60% penalty for partial matches
         }
-      }
-
-      // Require reasonable term coverage
-      if (termCoverage < 0.25) {
-        adjustedScore *= 0.3; // 70% penalty
-      } else if (termCoverage < 0.4) {
-        adjustedScore *= 0.6; // 40% penalty
       }
 
       return {
         _id: docId,
-        score: 0,
         rawScore: adjustedScore,
-        baseScore: baseScore,
-        termCoverage: termCoverage,
-        entityCoverage: entityCoverage,
         title: m.metadata.title,
         authority: m.metadata.authority,
         year: m.metadata.year,
         docType: m.metadata.docType,
-        excerpt,
+        excerpt: m.metadata.text,
         fileUrl: dbDoc.fileUrl || null,
         fileName: dbDoc.fileName || null,
       };
     }).filter(Boolean).sort((a, b) => b.rawScore - a.rawScore);
 
-    // Filter by minimum threshold
-    const MIN_RAW_SCORE = 1.0;
+    // Filter by threshold
+    const MIN_RAW_SCORE = 1.2;
     let filtered = enriched.filter(doc => doc.rawScore >= MIN_RAW_SCORE);
 
-    if (filtered.length === 0) {
-      await new QueryHistory({
-        queryText,
-        topDocumentTitle: "N/A",
-        results: [],
-      }).save();
+    if (filtered.length === 0) return res.json({ documents: [] });
 
-      return res.json({ documents: [] });
-    }
-
-    // Calculate display scores
+    // 3. Score Normalization with 85% Cap
     const topRawScore = filtered[0].rawScore;
-
     filtered.forEach((doc, index) => {
-      const relativeScore = doc.rawScore / topRawScore;
-
+      const relativeToTop = doc.rawScore / topRawScore;
+      
+      // We scale the score so that the highest possible value is 0.85
+      // and other results follow logically below that.
+      let finalScore;
       if (index === 0) {
-        // Top result: 85-100%
-        doc.score = Math.max(0.85, Math.min(doc.rawScore / 3.5, 1.0));
+        finalScore = 0.85; 
       } else {
-        // Other results: scale with clear gaps
-        if (relativeScore >= 0.95) {
-          doc.score = 0.80 + (relativeScore * 0.15);
-        } else if (relativeScore >= 0.80) {
-          doc.score = 0.65 + (relativeScore * 0.20);
-        } else if (relativeScore >= 0.60) {
-          doc.score = 0.50 + (relativeScore * 0.20);
-        } else {
-          doc.score = relativeScore * 0.55;
-        }
+        finalScore = relativeToTop * 0.80; // Second result will be max 80%
       }
 
-      doc.score = Math.min(doc.score, 1.0);
+      doc.score = parseFloat(finalScore.toFixed(2));
     });
 
-    // Final filter: remove < 40%
-    filtered = filtered.filter(doc => doc.score >= 0.40);
-    filtered = filtered.slice(0, 10);
-
+    // Final cleanup and save history
+    filtered = filtered.filter(doc => doc.score >= 0.30).slice(0, 10);
+    
     await new QueryHistory({
       queryText,
       topDocumentTitle: filtered[0]?.title || "N/A",
