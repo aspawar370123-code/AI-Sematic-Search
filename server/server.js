@@ -371,7 +371,7 @@ app.post("/api/officer/search", async (req, res) => {
 
       finalResults = dedupedResults.map((doc, idx) => {
         const dbInfo = dbDocMap[doc._id];
-        const score = idx === 0 ? 0.85 : parseFloat(((doc.rawScore / dedupedResults[0].rawScore) * 0.80).toFixed(2));
+        const score = Number(doc.rawScore.toFixed(3));
         return { ...doc, fileUrl: dbInfo?.fileUrl, fileName: dbInfo?.fileName, score };
       });
 
