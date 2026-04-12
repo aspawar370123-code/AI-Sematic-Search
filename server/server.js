@@ -337,8 +337,8 @@ app.post("/api/officer/search", async (req, res) => {
     })).filter(d => d.docId && d.text);
 
     if (candidateDocs.length === 0) {
-      return res.json({ documents: [] });
-    }
+  return res.json({ documents: [] });
+}
 
     // -------- RERANK (LIMITED INPUT SIZE) --------
     let rerankResponse;
@@ -392,19 +392,23 @@ Content: ${d.text || ""}
     }
 
     // -------- MAP RERANK RESULTS --------
-    const reranked = rerankResponse.data.map(item => {
-      const original = item.original;
+    const reranked = rerankResponse.data
+  .map(item => {
+    const original = item.original;
 
-      return {
-        _id: original.docId,
-        rawScore: typeof item.relevance_score === "number" ? item.relevance_score : 0,
-        title: original.metadata?.title,
-        authority: original.metadata?.authority,
-        year: original.metadata?.year,
-        docType: original.metadata?.docType,
-        excerpt: original.text
-      };
-    });
+    if (!original || !original.docId) return null;
+
+    return {
+      _id: original.docId,
+      rawScore: typeof item.relevance_score === "number" ? item.relevance_score : 0,
+      title: original.metadata?.title,
+      authority: original.metadata?.authority,
+      year: original.metadata?.year,
+      docType: original.metadata?.docType,
+      excerpt: original.text
+    };
+  })
+  .filter(Boolean);
 
     // -------- DEDUP BEST PER DOC --------
     const bestDocMap = new Map();
@@ -435,8 +439,8 @@ Content: ${d.text || ""}
       const dbInfo = dbMap[doc._id];
 
       const score = typeof doc.rawScore === "number"
-        ? Number(doc.rawScore.toFixed(3))
-        : 0;
+  ? Number(doc.rawScore.toFixed(3))
+  : 0;
 
       return {
         ...doc,
