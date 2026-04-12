@@ -281,8 +281,7 @@ app.post("/api/officer/search", async (req, res) => {
     const denseVector = await getEmbedding(queryText);
     const sparseVector = generateSparseVector(queryText);
 
-    // 1. High Alpha for Precision: Using 0.8 weight for keywords to ensure
-    // specific terms like "grants" take priority over general "UGC" context.
+    // Initial Retrieval: High Alpha to prioritize keywords for the candidate list
     const alpha = 0.8; 
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
@@ -294,85 +293,78 @@ app.post("/api/officer/search", async (req, res) => {
     const queryResponse = await index.query({
       vector: weightedDense,
       sparseVector: weightedSparse,
-      topK: 20,
+      topK: 25, // Fetch more candidates so the Re-ranker has more to work with
       includeMetadata: true
     });
 
-    const bestChunkPerDoc = new Map();
-    for (const m of queryResponse.matches) {
-      const docId = m.metadata?.docId;
-      if (!docId) continue;
-      if (!bestChunkPerDoc.has(docId) || m.score > bestChunkPerDoc.get(docId).score)
-        bestChunkPerDoc.set(docId, m);
-    }
+    if (!queryResponse.matches?.length) return res.json({ documents: [] });
 
-    const uniqueDocIds = Array.from(bestChunkPerDoc.keys());
-    const docs = await Document.find({ _id: { $in: uniqueDocIds } }).select("_id fileUrl fileName title");
-    const docMap = Object.fromEntries(docs.map(d => [d._id.toString(), d]));
+    // Step 2: Cross-Encoder Re-ranking
+    // We send the top candidates to Voyage AI to analyze the actual INTENT.
+    const candidateDocs = queryResponse.matches.map(m => ({
+      id: m.metadata.docId,
+      text: m.metadata.text,
+      metadata: m.metadata
+    }));
 
-    // Identify "Hard" keywords (Subject of the query)
-    const queryLower = queryText.toLowerCase();
-    const subjectKeywords = queryLower.split(' ').filter(word => 
-      word.length > 4 && !['about', 'which', 'under', 'policy'].includes(word)
-    );
+    const rerankResponse = await voyage.rerank({
+      query: queryText,
+      documents: candidateDocs.map(d => d.text),
+      topK: 10,
+      model: "rerank-2" // High-accuracy model for intent understanding
+    });
 
-    const enriched = uniqueDocIds.map(docId => {
-      const m = bestChunkPerDoc.get(docId);
-      const dbDoc = docMap[docId];
-      if (!dbDoc) return null;
+    // Step 3: Map Reranked results back to your Document objects
+    const reRankedResults = rerankResponse.data.map(item => {
+      const originalMatch = candidateDocs[item.index];
+      return {
+        _id: originalMatch.id,
+        reRankScore: item.relevance_score, // This is the 'Intent' score
+        title: originalMatch.metadata.title,
+        authority: originalMatch.metadata.authority,
+        year: originalMatch.metadata.year,
+        docType: originalMatch.metadata.docType,
+        excerpt: originalMatch.text
+      };
+    });
 
-      const titleLower = (m.metadata.title || "").toLowerCase();
-      const excerptLower = (m.metadata.text || "").toLowerCase();
+    // Fetch DB info for URLs
+    const uniqueDocIds = [...new Set(reRankedResults.map(r => r._id))];
+    const dbDocs = await Document.find({ _id: { $in: uniqueDocIds } }).select("fileUrl fileName");
+    const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
 
-      // 2. Mandatory Subject Match: If "grants" is in query but NOT in doc, 
-      // we apply a severe penalty even if "UGC" is present.
-      let subjectMatchCount = 0;
-      subjectKeywords.forEach(kw => {
-        if (titleLower.includes(kw) || excerptLower.includes(kw)) subjectMatchCount++;
-      });
+    // Step 4: Normalization and 85% Cap
+    // Cross-encoders are very confident; we must manually scale the top score.
+    const finalResults = reRankedResults.map((doc, index) => {
+      const dbInfo = dbDocMap[doc._id];
       
-      const subjectCoverage = subjectKeywords.length > 0 ? subjectMatchCount / subjectKeywords.length : 1;
-
-      let adjustedScore = m.score;
-      if (subjectKeywords.length > 0 && subjectCoverage === 0) {
-        adjustedScore *= 0.01; // Drop irrelevant "UGC" noise
-      } else if (subjectCoverage < 0.5) {
-        adjustedScore *= 0.5;
+      // Scaling: Top result is 0.85. Subsequent results are relative.
+      let displayScore;
+      if (index === 0) {
+        displayScore = 0.85;
+      } else {
+        // Scale relative to the top intent score
+        displayScore = (doc.reRankScore / reRankedResults[0].reRankScore) * 0.80;
       }
 
       return {
-        _id: docId,
-        rawScore: adjustedScore,
-        title: m.metadata.title,
-        authority: m.metadata.authority,
-        year: m.metadata.year,
-        docType: m.metadata.docType,
-        excerpt: m.metadata.text,
-        fileUrl: dbDoc.fileUrl || null,
-        fileName: dbDoc.fileName || null,
+        ...doc,
+        fileUrl: dbInfo?.fileUrl || null,
+        fileName: dbInfo?.fileName || null,
+        score: parseFloat(displayScore.toFixed(2))
       };
-    }).filter(Boolean).sort((a, b) => b.rawScore - a.rawScore);
-
-    // 3. Score Normalization with 85% Absolute Ceiling
-    const MIN_RAW_SCORE = 1.3;
-    let filtered = enriched.filter(doc => doc.rawScore >= MIN_RAW_SCORE);
-
-    if (filtered.length === 0) return res.json({ documents: [] });
-
-    filtered.forEach((doc, index) => {
-      // Linear scaling with 0.85 as the absolute max
-      const finalScore = index === 0 ? 0.85 : Math.min(0.85, (doc.rawScore / enriched[0].rawScore) * 0.75);
-      doc.score = parseFloat(finalScore.toFixed(2));
-    });
+    }).filter(d => d.score > 0.3); // Hide low-quality noise
 
     await new QueryHistory({
       queryText,
-      topDocumentTitle: filtered[0]?.title || "N/A",
-      results: filtered,
+      topDocumentTitle: finalResults[0]?.title || "N/A",
+      results: finalResults,
     }).save();
 
-    res.json({ documents: filtered });
+    res.json({ documents: finalResults });
+
   } catch (error) {
+    console.error("Re-rank Search error:", error);
     res.status(500).json({ message: "Search failed", error: error.message });
   }
 });

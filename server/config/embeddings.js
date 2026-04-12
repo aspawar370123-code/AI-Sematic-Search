@@ -152,36 +152,34 @@ const generateEmbedding = async (text) => {
 };
 
 /* QUERY DOCUMENTS */
-/* QUERY DOCUMENTS */
 const queryDocuments = async (question) => {
   const questionEmbedding = await generateEmbedding(question);
-  const sparseQuery = generateSparseVector(question); // ← ADD: BM25 for query
-
+  
   const results = await getIndex().query({
     vector: questionEmbedding,
-    sparseVector: sparseQuery,  // ← ADD: hybrid query
-    topK: 5,
+    topK: 20, 
     includeMetadata: true,
   });
 
-  if (!results.matches || results.matches.length === 0) {
-    return { answer: "No relevant documents found.", sources: [] };
-  }
+  if (!results.matches?.length) return { answer: "No relevant documents found.", sources: [] };
 
-  // ← ADD: filter low-relevance results (tune 0.75 as needed)
-  const relevantMatches = results.matches.filter(m => m.score >= 0.75);
+  // Apply Re-ranking here as well
+  const rerank = await voyage.rerank({
+    query: question,
+    documents: results.matches.map(m => m.metadata.text),
+    topK: 5,
+    model: "rerank-2"
+  });
 
-  if (relevantMatches.length === 0) {
-    return { answer: "No sufficiently relevant documents found.", sources: [] };
-  }
-
-  const context = relevantMatches  // ← CHANGE: was results.matches
-    .map((m) => `[${m.metadata.title}]:\n${m.metadata.text}`)
+  // Use the re-ranked context for Gemini
+  const context = rerank.data
+    .map(item => `[${results.matches[item.index].metadata.title}]:\n${item.document}`)
     .join("\n\n");
 
-  const sources = [...new Map(
-    relevantMatches.map((m) => [m.metadata.docId, { title: m.metadata.title }]) // ← CHANGE
-  ).values()];
+  const sources = rerank.data.map(item => ({
+    title: results.matches[item.index].metadata.title,
+    score: item.relevance_score
+  }));
 
   const completion = await ai.generateContent({
     contents: [{ role: "user", parts: [{ text: `Context:\n${context}\n\nQuestion: ${question}` }] }],
