@@ -315,7 +315,7 @@ app.post("/api/officer/search", async (req, res) => {
       metadata: m.metadata
     }));
 
-    // Cross-Encoder Re-ranking with Rate-Limit Handling
+    // Cross-Encoder Re-ranking
     let rerankResponse = null;
     let attempts = 0;
     const maxAttempts = 2;
@@ -346,9 +346,10 @@ app.post("/api/officer/search", async (req, res) => {
     if (rerankResponse) {
       const reRankedResults = rerankResponse.data.map(item => {
         const originalMatch = candidateDocs[item.index];
+
         return {
           _id: originalMatch.docId,
-          rawScore: item.relevance_score,
+          rawScore: typeof item.relevance_score === "number" ? item.relevance_score : 0,
           title: originalMatch.metadata.title,
           authority: originalMatch.metadata.authority,
           year: originalMatch.metadata.year,
@@ -357,7 +358,7 @@ app.post("/api/officer/search", async (req, res) => {
         };
       });
 
-      // Deduplicate AFTER re-ranking as a safety net
+      // Deduplicate AFTER re-ranking
       const seenDocIds = new Set();
       const dedupedResults = reRankedResults.filter(doc => {
         if (seenDocIds.has(doc._id)) return false;
@@ -369,26 +370,36 @@ app.post("/api/officer/search", async (req, res) => {
       const dbDocs = await Document.find({ _id: { $in: uniqueDocIds } }).select("fileUrl fileName");
       const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
 
-      finalResults = dedupedResults.map((doc, idx) => {
+      finalResults = dedupedResults.map(doc => {
         const dbInfo = dbDocMap[doc._id];
-        const score = Number(doc.rawScore.toFixed(3));
-        return { ...doc, fileUrl: dbInfo?.fileUrl, fileName: dbInfo?.fileName, score };
+
+        const score = typeof doc.rawScore === "number"
+          ? Number(doc.rawScore.toFixed(3))
+          : 0;
+
+        return {
+          ...doc,
+          fileUrl: dbInfo?.fileUrl,
+          fileName: dbInfo?.fileName,
+          score
+        };
       });
 
     } else {
-      // Fallback: Use raw Pinecone rankings if Voyage is unavailable
+      // Fallback: use Pinecone scores safely
       const uniqueIds = [...new Set(candidateDocs.map(d => d.docId))];
       const dbDocs = await Document.find({ _id: { $in: uniqueIds } }).select("fileUrl fileName");
       const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
 
-      finalResults = candidateDocs.slice(0, 10).map((m, idx) => ({
+      finalResults = candidateDocs.slice(0, 10).map(m => ({
         _id: m.docId,
         title: m.metadata.title,
         authority: m.metadata.authority,
         year: m.metadata.year,
         excerpt: m.text,
         fileUrl: dbDocMap[m.docId]?.fileUrl,
-        score: idx === 0 ? 0.85 : 0.75 - (idx * 0.05)
+        fileName: dbDocMap[m.docId]?.fileName,
+        score: typeof m.score === "number" ? Number(m.score.toFixed(3)) : 0
       }));
     }
 
@@ -405,7 +416,6 @@ app.post("/api/officer/search", async (req, res) => {
     res.status(500).json({ message: "Search failed", error: error.message });
   }
 });
-
 /* Officer Ask (RAG) */
 app.post("/api/officer/ask", async (req, res) => {
   const { queryText, authority, year, docType } = req.body;
