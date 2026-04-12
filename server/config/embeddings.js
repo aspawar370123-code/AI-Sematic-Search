@@ -154,16 +154,15 @@ const generateEmbedding = async (text) => {
 /* QUERY DOCUMENTS */
 const queryDocuments = async (question) => {
   const questionEmbedding = await generateEmbedding(question);
-  
+
   const results = await getIndex().query({
     vector: questionEmbedding,
-    topK: 20, 
+    topK: 20,
     includeMetadata: true,
   });
 
   if (!results.matches?.length) return { answer: "No relevant documents found.", sources: [] };
 
-  // Apply Re-ranking here as well
   const rerank = await voyage.rerank({
     query: question,
     documents: results.matches.map(m => m.metadata.text),
@@ -171,7 +170,6 @@ const queryDocuments = async (question) => {
     model: "rerank-2"
   });
 
-  // Use the re-ranked context for Gemini
   const context = rerank.data
     .map(item => `[${results.matches[item.index].metadata.title}]:\n${item.document}`)
     .join("\n\n");
