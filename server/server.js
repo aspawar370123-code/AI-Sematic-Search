@@ -300,20 +300,12 @@ app.post("/api/officer/search", async (req, res) => {
       return res.json({ documents: [] });
     }
 
-    // Deduplicate BEFORE re-ranking — keep best chunk per document
-    const bestChunkMap = new Map();
-    for (const m of queryResponse.matches) {
-      const docId = m.metadata.docId;
-      if (!bestChunkMap.has(docId) || m.score > bestChunkMap.get(docId).score) {
-        bestChunkMap.set(docId, m);
-      }
-    }
-
-    const candidateDocs = Array.from(bestChunkMap.values()).map(m => ({
-      docId: m.metadata.docId,
-      text: m.metadata.text,
-      metadata: m.metadata
-    }));
+    const candidateDocs = queryResponse.matches.map(m => ({
+  docId: m.metadata.docId,
+  text: m.metadata.text,
+  metadata: m.metadata,
+  pineconeScore: m.score
+}));
 
     // Cross-Encoder Re-ranking
     let rerankResponse = null;
