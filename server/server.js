@@ -281,34 +281,11 @@ app.post("/api/officer/search", async (req, res) => {
   }
 
   try {
-    // -------- QUERY EXPANSION --------
-    const expandQuery = (query) => {
-      const q = query.toLowerCase();
-      let expanded = q;
+    const denseVector = await getEmbedding(queryText);
+    const sparseVector = generateSparseVector(queryText);
 
-      if (/\b(how|apply|process|procedure|steps|eligibility|requirements|method|submit)\b/.test(q)) {
-        expanded += " application process procedure steps eligibility requirements guidelines submission";
-      }
-
-      if (/\b(structure|framework|components|format|overview|details|sections)\b/.test(q)) {
-        expanded += " structure components framework overview details sections";
-      }
-
-      if (/\b(what|define|explain|meaning|about)\b/.test(q)) {
-        expanded += " explanation details description information overview";
-      }
-
-      return expanded;
-    };
-
-    const expandedQuery = expandQuery(queryText);
-
-    // -------- EMBEDDINGS --------
-    const denseVector = await getEmbedding(expandedQuery);
-    const sparseVector = generateSparseVector(expandedQuery);
-
-    // -------- HYBRID SEARCH --------
-    const alpha = 0.3;
+    // Balanced hybrid search
+    const alpha = 0.5;
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
       indices: sparseVector.indices,
@@ -319,145 +296,147 @@ app.post("/api/officer/search", async (req, res) => {
     const queryResponse = await index.query({
       vector: weightedDense,
       sparseVector: weightedSparse,
-      topK: 50,
+      topK: 30,
       includeMetadata: true
     });
 
-    console.log("Matches:", queryResponse.matches?.length);
-
     if (!queryResponse.matches || queryResponse.matches.length === 0) {
+      await new QueryHistory({
+        queryText,
+        topDocumentTitle: "N/A",
+        results: [],
+      }).save();
       return res.json({ documents: [] });
     }
 
-    // -------- PREPARE CHUNKS (SAFE) --------
-    const candidateDocs = queryResponse.matches.map(m => ({
-      docId: m.metadata?.docId,
-      text: m.metadata?.text || "",
-      metadata: m.metadata || {}
-    })).filter(d => d.docId && d.text);
+    // STEP 1: Deduplicate - keep only best chunk per document
+    const bestChunkPerDoc = new Map();
+    for (const match of queryResponse.matches) {
+      const docId = match.metadata?.docId;
+      if (!docId) continue;
 
-    if (candidateDocs.length === 0) {
-  return res.json({ documents: [] });
-}
+      if (!bestChunkPerDoc.has(docId) || match.score > bestChunkPerDoc.get(docId).score) {
+        bestChunkPerDoc.set(docId, {
+          docId: docId,
+          text: match.metadata.text || "",
+          title: match.metadata.title || "",
+          authority: match.metadata.authority || "",
+          year: match.metadata.year || "",
+          docType: match.metadata.docType || "",
+          pineconeScore: match.score
+        });
+      }
+    }
 
-    // -------- RERANK (LIMITED INPUT SIZE) --------
-    let rerankResponse;
+    const uniqueCandidates = Array.from(bestChunkPerDoc.values());
+
+    // STEP 2: Re-rank using Voyage AI
+    let rerankedResults = [];
 
     try {
-      const limitedDocs = candidateDocs.slice(0, 30); // prevent overload
-
-      rerankResponse = await voyage.rerank({
-        query: expandedQuery,
-        documents: limitedDocs.map(d => `
-Title: ${d.metadata?.title || ""}
-Authority: ${d.metadata?.authority || ""}
-Type: ${d.metadata?.docType || ""}
-Year: ${d.metadata?.year || ""}
-Content: ${d.text || ""}
-        `),
-        topK: 20,
+      const rerankResponse = await voyage.rerank({
+        query: queryText,
+        documents: uniqueCandidates.map(d => `Title: ${d.title}\nType: ${d.docType}\nYear: ${d.year}\nContent: ${d.text}`),
+        topK: 15,
         model: "rerank-2"
       });
 
-      // map only limited docs
-      rerankResponse.data = rerankResponse.data.map(item => ({
-        ...item,
-        original: limitedDocs[item.index]
-      }));
-
+      rerankedResults = rerankResponse.data.map(item => {
+        const original = uniqueCandidates[item.index];
+        return {
+          _id: original.docId,
+          title: original.title,
+          authority: original.authority,
+          year: original.year,
+          docType: original.docType,
+          excerpt: original.text,
+          rawScore: item.relevance_score || 0
+        };
+      });
     } catch (err) {
       console.error("Rerank failed:", err.message);
 
-      // -------- FALLBACK --------
-      const uniqueMap = new Map();
+      // Fallback: use Pinecone scores
+      rerankedResults = uniqueCandidates.slice(0, 15).map(d => ({
+        _id: d.docId,
+        title: d.title,
+        authority: d.authority,
+        year: d.year,
+        docType: d.docType,
+        excerpt: d.text,
+        rawScore: d.pineconeScore / 2.0
+      }));
+    }
 
-      for (const m of queryResponse.matches) {
-        const id = m.metadata?.docId;
-        if (!id) continue;
+    // STEP 3: Apply relevance threshold
+    const RELEVANCE_THRESHOLD = 0.3;
+    let filtered = rerankedResults.filter(doc => doc.rawScore >= RELEVANCE_THRESHOLD);
 
-        if (!uniqueMap.has(id)) {
-          uniqueMap.set(id, {
-            _id: id,
-            title: m.metadata?.title,
-            authority: m.metadata?.authority,
-            year: m.metadata?.year,
-            docType: m.metadata?.docType,
-            excerpt: m.metadata?.text,
-            rawScore: m.score || 0
-          });
+    if (filtered.length === 0) {
+      await new QueryHistory({
+        queryText,
+        topDocumentTitle: "N/A",
+        results: [],
+      }).save();
+      return res.json({ documents: [] });
+    }
+
+    // STEP 4: Fetch file URLs
+    const docIds = filtered.map(d => d._id);
+    const dbDocs = await Document.find({ _id: { $in: docIds } }).select("fileUrl fileName");
+    const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
+
+    // STEP 5: Calculate display scores
+    const topRawScore = filtered[0].rawScore;
+
+    filtered.forEach((doc, index) => {
+      const dbInfo = dbDocMap[doc._id];
+      doc.fileUrl = dbInfo?.fileUrl || null;
+      doc.fileName = dbInfo?.fileName || null;
+
+      if (index === 0) {
+        doc.score = Math.max(0.85, Math.min(doc.rawScore, 1.0));
+      } else {
+        const relativeScore = doc.rawScore / topRawScore;
+
+        if (relativeScore >= 0.90) {
+          doc.score = 0.80 + (relativeScore * 0.15);
+        } else if (relativeScore >= 0.75) {
+          doc.score = 0.65 + (relativeScore * 0.20);
+        } else if (relativeScore >= 0.60) {
+          doc.score = 0.50 + (relativeScore * 0.20);
+        } else {
+          doc.score = relativeScore * 0.55;
         }
       }
 
-      return res.json({ documents: Array.from(uniqueMap.values()) });
-    }
-
-    // -------- MAP RERANK RESULTS --------
-    const reranked = rerankResponse.data
-  .map(item => {
-    const original = item.original;
-
-    if (!original || !original.docId) return null;
-
-    return {
-      _id: original.docId,
-      rawScore: typeof item.relevance_score === "number" ? item.relevance_score : 0,
-      title: original.metadata?.title,
-      authority: original.metadata?.authority,
-      year: original.metadata?.year,
-      docType: original.metadata?.docType,
-      excerpt: original.text
-    };
-  })
-  .filter(Boolean);
-
-    // -------- DEDUP BEST PER DOC --------
-    const bestDocMap = new Map();
-
-    for (const doc of reranked) {
-      if (
-        !bestDocMap.has(doc._id) ||
-        doc.rawScore > bestDocMap.get(doc._id).rawScore
-      ) {
-        bestDocMap.set(doc._id, doc);
-      }
-    }
-
-    let finalResults = Array.from(bestDocMap.values());
-
-    // -------- SORT --------
-    finalResults.sort((a, b) => b.rawScore - a.rawScore);
-
-    // -------- LIMIT --------
-    finalResults = finalResults.slice(0, 8);
-
-    // -------- FETCH FILE INFO --------
-    const ids = finalResults.map(r => r._id);
-    const dbDocs = await Document.find({ _id: { $in: ids } }).select("fileUrl fileName");
-    const dbMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
-
-    finalResults = finalResults.map(doc => {
-      const dbInfo = dbMap[doc._id];
-
-      const score = typeof doc.rawScore === "number"
-  ? Number(doc.rawScore.toFixed(3))
-  : 0;
-
-      return {
-        ...doc,
-        fileUrl: dbInfo?.fileUrl,
-        fileName: dbInfo?.fileName,
-        score
-      };
+      doc.score = Math.min(doc.score, 1.0);
+      delete doc.rawScore;
     });
 
-    // -------- SAVE HISTORY --------
+    // STEP 6: Final filter
+    filtered = filtered.filter(doc => doc.score >= 0.45);
+    filtered = filtered.slice(0, 8);
+
+    // Handle non-English content
+    filtered.forEach(doc => {
+      const excerpt = doc.excerpt || "";
+      const nonAsciiRatio = (excerpt.match(/[^\x00-\x7F]/g) || []).length / (excerpt.length || 1);
+      const words = excerpt.split(/\s+/).filter(w => w.length > 2);
+      const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
+
+      if (nonAsciiRatio > 0.3 || realWordRatio < 0.25) {
+        doc.excerpt = "[Content in multiple languages. View full document for details.]";
+      }
+    });
+
     await new QueryHistory({
       queryText,
-      topDocumentTitle: finalResults[0]?.title || "N/A",
-      results: finalResults
+      topDocumentTitle: filtered[0]?.title || "N/A",
+      results: filtered,
     }).save();
 
-    res.json({ documents: finalResults });
+    res.json({ documents: filtered });
 
   } catch (error) {
     console.error("Search error:", error);
