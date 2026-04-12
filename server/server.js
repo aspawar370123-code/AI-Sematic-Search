@@ -322,7 +322,7 @@ Type: ${d.metadata.docType}
 Year: ${d.metadata.year}
 Content: ${d.text}
 `),
-          topK: 10,
+          topK: 50,
           model: "rerank-2"
         });
         break;
@@ -355,13 +355,18 @@ Content: ${d.text}
         };
       });
 
-      // Deduplicate AFTER re-ranking
-      const seenDocIds = new Set();
-      const dedupedResults = reRankedResults.filter(doc => {
-        if (seenDocIds.has(doc._id)) return false;
-        seenDocIds.add(doc._id);
-        return true;
-      });
+      const bestDocMap = new Map();
+
+for (const doc of reRankedResults) {
+  if (
+    !bestDocMap.has(doc._id) ||
+    doc.rawScore > bestDocMap.get(doc._id).rawScore
+  ) {
+    bestDocMap.set(doc._id, doc);
+  }
+}
+
+const dedupedResults = Array.from(bestDocMap.values());
 
       const uniqueDocIds = dedupedResults.map(r => r._id);
       const dbDocs = await Document.find({ _id: { $in: uniqueDocIds } }).select("fileUrl fileName");
