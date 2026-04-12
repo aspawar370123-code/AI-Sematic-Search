@@ -281,7 +281,8 @@ app.post("/api/officer/search", async (req, res) => {
     const denseVector = await getEmbedding(queryText);
     const sparseVector = generateSparseVector(queryText);
 
-    // Initial Retrieval: High Alpha to prioritize keywords for the candidate list
+    // Step 1: Initial Retrieval using Pinecone (Dot Product)
+    // We use a high alpha to ensure keywords like "UGC" or "NAAC" are prioritized.
     const alpha = 0.8; 
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
@@ -293,68 +294,94 @@ app.post("/api/officer/search", async (req, res) => {
     const queryResponse = await index.query({
       vector: weightedDense,
       sparseVector: weightedSparse,
-      topK: 25, // Fetch more candidates so the Re-ranker has more to work with
+      topK: 25, // Fetch a larger candidate pool for the Re-ranker
       includeMetadata: true
     });
 
-    if (!queryResponse.matches?.length) return res.json({ documents: [] });
+    if (!queryResponse.matches || queryResponse.matches.length === 0) {
+      return res.json({ documents: [] });
+    }
 
-    // Step 2: Cross-Encoder Re-ranking
-    // We send the top candidates to Voyage AI to analyze the actual INTENT.
+    // Prepare candidates for Re-ranking
     const candidateDocs = queryResponse.matches.map(m => ({
-      id: m.metadata.docId,
+      docId: m.metadata.docId,
       text: m.metadata.text,
       metadata: m.metadata
     }));
 
-    const rerankResponse = await voyage.rerank({
-      query: queryText,
-      documents: candidateDocs.map(d => d.text),
-      topK: 10,
-      model: "rerank-2" // High-accuracy model for intent understanding
-    });
+    // Step 2: Cross-Encoder Re-ranking with Rate-Limit Handling
+    let rerankResponse = null;
+    let attempts = 0;
+    const maxAttempts = 2;
 
-    // Step 3: Map Reranked results back to your Document objects
-    const reRankedResults = rerankResponse.data.map(item => {
-      const originalMatch = candidateDocs[item.index];
-      return {
-        _id: originalMatch.id,
-        reRankScore: item.relevance_score, // This is the 'Intent' score
-        title: originalMatch.metadata.title,
-        authority: originalMatch.metadata.authority,
-        year: originalMatch.metadata.year,
-        docType: originalMatch.metadata.docType,
-        excerpt: originalMatch.text
-      };
-    });
-
-    // Fetch DB info for URLs
-    const uniqueDocIds = [...new Set(reRankedResults.map(r => r._id))];
-    const dbDocs = await Document.find({ _id: { $in: uniqueDocIds } }).select("fileUrl fileName");
-    const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
-
-    // Step 4: Normalization and 85% Cap
-    // Cross-encoders are very confident; we must manually scale the top score.
-    const finalResults = reRankedResults.map((doc, index) => {
-      const dbInfo = dbDocMap[doc._id];
-      
-      // Scaling: Top result is 0.85. Subsequent results are relative.
-      let displayScore;
-      if (index === 0) {
-        displayScore = 0.85;
-      } else {
-        // Scale relative to the top intent score
-        displayScore = (doc.reRankScore / reRankedResults[0].reRankScore) * 0.80;
+    while (attempts < maxAttempts) {
+      try {
+        rerankResponse = await voyage.rerank({
+          query: queryText,
+          documents: candidateDocs.map(d => d.text),
+          topK: 10,
+          model: "rerank-2"
+        });
+        break; // Success, exit loop
+      } catch (err) {
+        if (err.statusCode === 429 && attempts < maxAttempts - 1) {
+          console.log(`Voyage Rate Limit hit. Retrying in 22 seconds...`);
+          await new Promise(resolve => setTimeout(resolve, 22000)); // Wait for 3 RPM limit to reset
+          attempts++;
+        } else {
+          // If it's a different error or we're out of attempts, fallback to Pinecone scores
+          console.error("Re-rank failed, falling back to raw scores:", err.message);
+          break;
+        }
       }
+    }
 
-      return {
-        ...doc,
-        fileUrl: dbInfo?.fileUrl || null,
-        fileName: dbInfo?.fileName || null,
-        score: parseFloat(displayScore.toFixed(2))
-      };
-    }).filter(d => d.score > 0.3); // Hide low-quality noise
+    let finalResults;
 
+    if (rerankResponse) {
+      // Use Re-ranked "Intent" scores
+      const reRankedResults = rerankResponse.data.map(item => {
+        const originalMatch = candidateDocs[item.index];
+        return {
+          _id: originalMatch.docId,
+          rawScore: item.relevance_score,
+          title: originalMatch.metadata.title,
+          authority: originalMatch.metadata.authority,
+          year: originalMatch.metadata.year,
+          docType: originalMatch.metadata.docType,
+          excerpt: originalMatch.text
+        };
+      });
+
+      const uniqueDocIds = [...new Set(reRankedResults.map(r => r._id))];
+      const dbDocs = await Document.find({ _id: { $in: uniqueDocIds } }).select("fileUrl fileName");
+      const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
+
+      finalResults = reRankedResults.map((doc, idx) => {
+        const dbInfo = dbDocMap[doc._id];
+        // Apply 85% Cap: Top result is exactly 0.85, others follow relatively.
+        const score = idx === 0 ? 0.85 : parseFloat(((doc.rawScore / reRankedResults[0].rawScore) * 0.80).toFixed(2));
+        
+        return { ...doc, fileUrl: dbInfo?.fileUrl, fileName: dbInfo?.fileName, score };
+      });
+    } else {
+      // Fallback: Use raw Pinecone rankings if Voyage is unavailable
+      const uniqueIds = [...new Set(candidateDocs.map(d => d.docId))];
+      const dbDocs = await Document.find({ _id: { $in: uniqueIds } }).select("fileUrl fileName");
+      const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
+
+      finalResults = candidateDocs.slice(0, 10).map((m, idx) => ({
+        _id: m.docId,
+        title: m.metadata.title,
+        authority: m.metadata.authority,
+        year: m.metadata.year,
+        excerpt: m.text,
+        fileUrl: dbDocMap[m.docId]?.fileUrl,
+        score: idx === 0 ? 0.85 : 0.75 - (idx * 0.05) // Simulated descending scores
+      }));
+    }
+
+    // Save search to history
     await new QueryHistory({
       queryText,
       topDocumentTitle: finalResults[0]?.title || "N/A",
@@ -364,7 +391,7 @@ app.post("/api/officer/search", async (req, res) => {
     res.json({ documents: finalResults });
 
   } catch (error) {
-    console.error("Re-rank Search error:", error);
+    console.error("Search block error:", error);
     res.status(500).json({ message: "Search failed", error: error.message });
   }
 });
