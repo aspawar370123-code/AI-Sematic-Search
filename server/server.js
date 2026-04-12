@@ -324,7 +324,12 @@ app.post("/api/officer/search", async (req, res) => {
       try {
         rerankResponse = await voyage.rerank({
           query: queryText,
-          documents: candidateDocs.map(d => d.text),
+          documents: candidateDocs.map(d => `
+Title: ${d.metadata.title}
+Type: ${d.metadata.docType}
+Year: ${d.metadata.year}
+Content: ${d.text}
+`),
           topK: 10,
           model: "rerank-2"
         });
