@@ -53,7 +53,19 @@ const processDocument = async (doc) => {
   console.log(`${"=".repeat(50)}`);
 
   const rawText = await extractTextFromPDF(doc.fileUrl);
-  const allChunks = chunkText(cleanText(rawText));
+  const cleaned = cleanText(rawText);
+
+// Inject title into every chunk for strong context
+const baseChunks = chunkText(cleaned);
+
+const allChunks = baseChunks.map(chunk => {
+  return `Document: ${doc.title}
+Authority: ${doc.authority}
+Type: ${doc.docType}
+Year: ${doc.year || "N/A"}
+
+${chunk}`;
+});
   const chunks = allChunks.filter(c => c.trim().length > 0);
   const totalChunks = chunks.length;
 
@@ -101,12 +113,47 @@ const processDocument = async (doc) => {
 };
 
 /* SPLIT TEXT INTO CHUNKS */
-const chunkText = (text, chunkSize = 100) => {
-  const words = text.split(/\s+/);
+const chunkText = (text, options = {}) => {
+  const {
+    maxWords = 200,
+    overlap = 40
+  } = options;
+
+  // Split into sentences (better than words)
+  const sentences = text.split(/(?<=[.?!])\s+/);
+
   const chunks = [];
-  for (let i = 0; i < words.length; i += chunkSize) {
-    chunks.push(words.slice(i, i + chunkSize).join(" "));
+  let currentChunk = [];
+  let wordCount = 0;
+
+  for (let sentence of sentences) {
+    const words = sentence.split(/\s+/);
+    const sentenceLength = words.length;
+
+    // If adding this sentence exceeds limit → push chunk
+    if (wordCount + sentenceLength > maxWords) {
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk.join(" "));
+      }
+
+      // Start new chunk with overlap
+      const overlapWords = currentChunk
+        .join(" ")
+        .split(/\s+/)
+        .slice(-overlap);
+
+      currentChunk = [overlapWords.join(" "), sentence];
+      wordCount = overlapWords.length + sentenceLength;
+    } else {
+      currentChunk.push(sentence);
+      wordCount += sentenceLength;
+    }
   }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk.join(" "));
+  }
+
   return chunks;
 };
 
