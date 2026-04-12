@@ -281,23 +281,19 @@ app.post("/api/officer/search", async (req, res) => {
   }
 
   try {
-    // -------- GENERIC QUERY EXPANSION (NO HARDCODING) --------
+    // -------- QUERY EXPANSION --------
     const expandQuery = (query) => {
       const q = query.toLowerCase();
-
       let expanded = q;
 
-      // procedural intent
       if (/\b(how|apply|process|procedure|steps|eligibility|requirements|method|submit)\b/.test(q)) {
         expanded += " application process procedure steps eligibility requirements guidelines submission";
       }
 
-      // structural intent
       if (/\b(structure|framework|components|format|overview|details|sections)\b/.test(q)) {
         expanded += " structure components framework overview details sections";
       }
 
-      // informational intent
       if (/\b(what|define|explain|meaning|about)\b/.test(q)) {
         expanded += " explanation details description information overview";
       }
@@ -311,7 +307,7 @@ app.post("/api/officer/search", async (req, res) => {
     const denseVector = await getEmbedding(expandedQuery);
     const sparseVector = generateSparseVector(expandedQuery);
 
-    // -------- BALANCED HYBRID SEARCH --------
+    // -------- HYBRID SEARCH --------
     const alpha = 0.3;
     const weightedDense = denseVector.map(v => v * (1 - alpha));
     const weightedSparse = {
@@ -319,7 +315,6 @@ app.post("/api/officer/search", async (req, res) => {
       values: sparseVector.values.map(v => v * alpha)
     };
 
-    // -------- RETRIEVE CANDIDATES --------
     const index = getPineconeIndex();
     const queryResponse = await index.query({
       vector: weightedDense,
@@ -328,74 +323,90 @@ app.post("/api/officer/search", async (req, res) => {
       includeMetadata: true
     });
 
+    console.log("Matches:", queryResponse.matches?.length);
+
     if (!queryResponse.matches || queryResponse.matches.length === 0) {
       return res.json({ documents: [] });
     }
 
-    // -------- PREPARE ALL CHUNKS (NO EARLY DEDUP) --------
+    // -------- PREPARE CHUNKS (SAFE) --------
     const candidateDocs = queryResponse.matches.map(m => ({
-      docId: m.metadata.docId,
-      text: m.metadata.text,
-      metadata: m.metadata
-    }));
+      docId: m.metadata?.docId,
+      text: m.metadata?.text || "",
+      metadata: m.metadata || {}
+    })).filter(d => d.docId && d.text);
 
-    // -------- RERANK WITH CONTEXT --------
+    if (candidateDocs.length === 0) {
+      return res.json({ documents: [] });
+    }
+
+    // -------- RERANK (LIMITED INPUT SIZE) --------
     let rerankResponse;
 
     try {
+      const limitedDocs = candidateDocs.slice(0, 30); // prevent overload
+
       rerankResponse = await voyage.rerank({
         query: expandedQuery,
-        documents: candidateDocs.map(d => `
-Title: ${d.metadata.title}
-Authority: ${d.metadata.authority}
-Type: ${d.metadata.docType}
-Year: ${d.metadata.year}
-Content: ${d.text}
+        documents: limitedDocs.map(d => `
+Title: ${d.metadata?.title || ""}
+Authority: ${d.metadata?.authority || ""}
+Type: ${d.metadata?.docType || ""}
+Year: ${d.metadata?.year || ""}
+Content: ${d.text || ""}
         `),
         topK: 20,
         model: "rerank-2"
       });
+
+      // map only limited docs
+      rerankResponse.data = rerankResponse.data.map(item => ({
+        ...item,
+        original: limitedDocs[item.index]
+      }));
+
     } catch (err) {
       console.error("Rerank failed:", err.message);
 
-      // fallback to Pinecone ranking
+      // -------- FALLBACK --------
       const uniqueMap = new Map();
 
       for (const m of queryResponse.matches) {
-        if (!uniqueMap.has(m.metadata.docId)) {
-          uniqueMap.set(m.metadata.docId, {
-            _id: m.metadata.docId,
-            title: m.metadata.title,
-            authority: m.metadata.authority,
-            year: m.metadata.year,
-            docType: m.metadata.docType,
-            excerpt: m.metadata.text,
+        const id = m.metadata?.docId;
+        if (!id) continue;
+
+        if (!uniqueMap.has(id)) {
+          uniqueMap.set(id, {
+            _id: id,
+            title: m.metadata?.title,
+            authority: m.metadata?.authority,
+            year: m.metadata?.year,
+            docType: m.metadata?.docType,
+            excerpt: m.metadata?.text,
             rawScore: m.score || 0
           });
         }
       }
 
-      const docs = Array.from(uniqueMap.values());
-
-      return res.json({ documents: docs });
+      return res.json({ documents: Array.from(uniqueMap.values()) });
     }
 
     // -------- MAP RERANK RESULTS --------
     const reranked = rerankResponse.data.map(item => {
-      const original = candidateDocs[item.index];
+      const original = item.original;
 
       return {
         _id: original.docId,
         rawScore: typeof item.relevance_score === "number" ? item.relevance_score : 0,
-        title: original.metadata.title,
-        authority: original.metadata.authority,
-        year: original.metadata.year,
-        docType: original.metadata.docType,
+        title: original.metadata?.title,
+        authority: original.metadata?.authority,
+        year: original.metadata?.year,
+        docType: original.metadata?.docType,
         excerpt: original.text
       };
     });
 
-    // -------- DEDUP (KEEP BEST CHUNK PER DOC) --------
+    // -------- DEDUP BEST PER DOC --------
     const bestDocMap = new Map();
 
     for (const doc of reranked) {
@@ -409,10 +420,10 @@ Content: ${d.text}
 
     let finalResults = Array.from(bestDocMap.values());
 
-    // -------- SORT BY SCORE --------
+    // -------- SORT --------
     finalResults.sort((a, b) => b.rawScore - a.rawScore);
 
-    // -------- TAKE TOP RESULTS --------
+    // -------- LIMIT --------
     finalResults = finalResults.slice(0, 8);
 
     // -------- FETCH FILE INFO --------
@@ -423,11 +434,15 @@ Content: ${d.text}
     finalResults = finalResults.map(doc => {
       const dbInfo = dbMap[doc._id];
 
+      const score = typeof doc.rawScore === "number"
+        ? Number(doc.rawScore.toFixed(3))
+        : 0;
+
       return {
         ...doc,
         fileUrl: dbInfo?.fileUrl,
         fileName: dbInfo?.fileName,
-        score: Number(doc.rawScore.toFixed(3)) // REAL score, no fake %
+        score
       };
     });
 
