@@ -1,16 +1,19 @@
-const { Pinecone } = require("@pinecone-database/pinecone");
-const pdfParse = require("pdf-parse");
-const axios = require("axios");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+import { Pinecone } from "@pinecone-database/pinecone";
+import axios from "axios";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { createRequire } from "module";
+import Tesseract from "tesseract.js";
+import { fromBuffer } from "pdf2pic";
+import natural from "natural";
+
+const require = createRequire(import.meta.url);
 const { VoyageAIClient } = require("voyageai");
-const Tesseract = require("tesseract.js");
-const { fromBuffer } = require("pdf2pic");
-const natural = require('natural'); // Declared only ONCE here
+const pdfParse = require("pdf-parse");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const ai = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const ai = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
 
@@ -25,24 +28,25 @@ function cleanText(text) {
     .trim();
 }
 const tokenizer = new natural.WordTokenizer();
+
 const generateSparseVector = (text) => {
-  const words = tokenizer.tokenize(text.toLowerCase()) || [];
+  const tokens = tokenizer.tokenize(text.toLowerCase()) || [];
+
   const counts = {};
-  words.forEach(word => {
-    let hash = 0;
-    for (let i = 0; i < word.length; i++) {
-      hash = ((hash << 5) - hash) + word.charCodeAt(i);
-      hash |= 0; // Convert to 32-bit integer
-    }
-    const index = Math.abs(hash) % 1000000;
-    counts[index] = (counts[index] || 0) + 1;
+
+  tokens.forEach(token => {
+    if (token.length < 3) return; // remove noise
+
+    counts[token] = (counts[token] || 0) + 1;
   });
+
+  const vocabulary = Object.keys(counts);
+
   return {
-    indices: Object.keys(counts).map(Number),
-    values: Object.values(counts).map(v => parseFloat(v.toFixed(2)))
+    indices: vocabulary.map((_, i) => i),
+    values: vocabulary.map(word => Math.log(1 + counts[word]))
   };
 };
-
 /**
  * MAIN PIPELINE: Processes PDF, generates 512-dim Voyage embeddings + BM25 sparse vectors.
  */
@@ -85,6 +89,12 @@ ${chunk}`;
     const records = embeddings.map((values, j) => {
       const chunkIdx = i + j;
       const recordId = `${doc._id}-chunk-${chunkIdx}`;
+      const cleanChunk = batch[j]
+  .replace(/Document:.*\n/g, "")
+  .replace(/Authority:.*\n/g, "")
+  .replace(/Type:.*\n/g, "")
+  .replace(/Year:.*\n/g, "");
+
       const sparseValues = generateSparseVector(batch[j]); // BM25 calculation
 
       return {
@@ -112,41 +122,51 @@ ${chunk}`;
   }
 };
 
-/* SPLIT TEXT INTO CHUNKS */
 const chunkText = (text, options = {}) => {
   const {
-    maxWords = 200,
-    overlap = 40
+    maxWords = 350,   // balanced size (NOT too big)
+    overlap = 80      // enough context carry-over
   } = options;
 
-  // Split into sentences (better than words)
-  const sentences = text.split(/(?<=[.?!])\s+/);
+  // Step 1: Split into paragraphs first
+  const paragraphs = text.split(/\n+/).map(p => p.trim()).filter(Boolean);
 
   const chunks = [];
   let currentChunk = [];
   let wordCount = 0;
 
-  for (let sentence of sentences) {
-    const words = sentence.split(/\s+/);
-    const sentenceLength = words.length;
+  for (let para of paragraphs) {
+    const sentences = para.split(/(?<=[.?!])\s+/);
 
-    // If adding this sentence exceeds limit → push chunk
-    if (wordCount + sentenceLength > maxWords) {
-      if (currentChunk.length > 0) {
-        chunks.push(currentChunk.join(" "));
+    for (let sentence of sentences) {
+      const words = sentence.split(/\s+/);
+      const sentenceLength = words.length;
+
+      // If adding sentence exceeds limit → push chunk
+      if (wordCount + sentenceLength > maxWords) {
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk.join(" "));
+        }
+
+        // Create overlap from previous chunk
+        const overlapWords = currentChunk
+          .join(" ")
+          .split(/\s+/)
+          .slice(-overlap);
+
+        currentChunk = [overlapWords.join(" "), sentence];
+        wordCount = overlapWords.length + sentenceLength;
+      } else {
+        currentChunk.push(sentence);
+        wordCount += sentenceLength;
       }
+    }
 
-      // Start new chunk with overlap
-      const overlapWords = currentChunk
-        .join(" ")
-        .split(/\s+/)
-        .slice(-overlap);
-
-      currentChunk = [overlapWords.join(" "), sentence];
-      wordCount = overlapWords.length + sentenceLength;
-    } else {
-      currentChunk.push(sentence);
-      wordCount += sentenceLength;
+    // 🔥 HARD BOUNDARY: Don't mix unrelated paragraphs too much
+    if (wordCount > maxWords * 0.8) {
+      chunks.push(currentChunk.join(" "));
+      currentChunk = [];
+      wordCount = 0;
     }
   }
 
@@ -233,4 +253,4 @@ const queryDocuments = async (question) => {
   return { answer: completion.response.text(), sources };
 };
 
-module.exports = { processDocument, queryDocuments };
+export { processDocument, queryDocuments };

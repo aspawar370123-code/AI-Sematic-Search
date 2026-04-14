@@ -153,12 +153,16 @@ useEffect(() => {
       }));
     } catch (err) {
       console.error("Summarize error:", err);
-      setSummaryModal(prev => ({
-        ...prev,
-        loading: false,
-        text: null,
-        error: "Failed to generate summary. Please try again.",
-      }));
+     setSummaryModal({
+  docId: doc._id,
+  title: doc.title,
+  authority: doc.authority,
+  year: doc.year,
+  excerpt: doc.excerpt, // ✅ ADD THIS
+  loading: true,
+  text: null,
+  error: null,
+});
     }
   };
 

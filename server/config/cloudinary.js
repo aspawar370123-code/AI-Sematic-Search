@@ -1,8 +1,11 @@
-const cloudinary = require("cloudinary").v2;
-require("dotenv").config();
+import cloudinary from "cloudinary";
+import dotenv from "dotenv";
+dotenv.config();
+
+const cloudinaryV2 = cloudinary.v2;
 
 // Configure cloudinary with environment variables
-cloudinary.config({
+cloudinaryV2.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
@@ -10,8 +13,8 @@ cloudinary.config({
 });
 
 // Test cloudinary connection
-cloudinary.api.ping()
+cloudinaryV2.api.ping()
   .then(() => console.log("Cloudinary connected successfully"))
   .catch(err => console.error("Cloudinary connection failed:", err));
 
-module.exports = cloudinary;
+export default cloudinaryV2;

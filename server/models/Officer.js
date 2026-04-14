@@ -1,12 +1,11 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
-const OfficerSchema = new mongoose.Schema({
+const officerSchema = new mongoose.Schema({
   name: String,
   designation: String,
   email: { type: String, unique: true },
   password: String,
-  approved: { type: Boolean, default: false }, // admin approval optional
-  lastActiveAt: { type: Date, default: null}
+  lastActiveAt: Date
 }, { timestamps: true });
 
-module.exports = mongoose.model("Officer", OfficerSchema);
+export default mongoose.model("Officer", officerSchema);

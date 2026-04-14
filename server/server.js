@@ -1,25 +1,29 @@
-require("dotenv").config();
-const multer = require("multer");
-const express = require("express");
-const mongoose = require("mongoose");
-const cors = require("cors");
-const https = require("https");
-const axios = require("axios");
-const { Pinecone } = require("@pinecone-database/pinecone");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+import dotenv from "dotenv";
+dotenv.config();
+
+import { GoogleGenAI } from "@google/genai";
+import express from "express";
+import mongoose from "mongoose";
+import cors from "cors";
+import https from "https";
+import { Pinecone } from "@pinecone-database/pinecone";
+import { createRequire } from "module";
+import natural from "natural";
+
+const require = createRequire(import.meta.url);
 const { VoyageAIClient } = require("voyageai");
 
 // Internal Modules
-const QueryHistory = require("./models/QueryHistory");
-const Document = require("./models/Document");
-const Admin = require("./models/Admin");
-const Officer = require("./models/Officer");
-const { processDocument, queryDocuments } = require("./config/embeddings");
-const upload = require("./config/multerCloudinary");
-const cloudinary = require("./config/cloudinary");
+import QueryHistory from "./models/QueryHistory.js";
+import Document from "./models/Document.js";
+import Admin from "./models/Admin.js";
+import Officer from "./models/Officer.js";
+import { processDocument, queryDocuments } from "./config/embeddings.js";
+import upload from "./config/multerCloudinary.js";
+import cloudinary from "./config/cloudinary.js";
 
 const app = express();
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
 
 app.use(cors({
@@ -36,12 +40,11 @@ mongoose.connect(process.env.MONGODB_URI)
   .catch(err => console.error("MongoDB Error:", err));
 
 /* ─── Shared Helpers ─────────────────────────────────────────── */
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
 
 const getPineconeIndex = () => {
-  const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
   return pc.index(process.env.PINECONE_INDEX);
 };
-
 const getEmbedding = async (text) => {
   const result = await voyage.embed({ input: [text], model: "voyage-3-lite" });
   return result.data[0].embedding;
@@ -50,6 +53,25 @@ const getEmbedding = async (text) => {
 /* ─── Routes ─────────────────────────────────────────────────── */
 
 app.get("/", (req, res) => res.send("Server running"));
+
+// Test endpoint to check Pinecone
+app.get("/test-pinecone", async (req, res) => {
+  try {
+    const index = getPineconeIndex();
+    const stats = await index.describeIndexStats();
+    res.json({
+      success: true,
+      stats: stats,
+      message: "Pinecone connected successfully"
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: "Pinecone connection failed"
+    });
+  }
+});
 
 /* Admin Routes */
 app.post("/admin/login", async (req, res) => {
@@ -255,21 +277,23 @@ app.post("/query", async (req, res) => {
   }
 });
 
+const tokenizer = new natural.WordTokenizer();
+
 const generateSparseVector = (text) => {
-  const words = text.toLowerCase().match(/\w+/g) || [];
+  const tokens = tokenizer.tokenize(text.toLowerCase()) || [];
+
   const counts = {};
-  words.forEach(word => {
-    let hash = 0;
-    for (let i = 0; i < word.length; i++) {
-      hash = ((hash << 5) - hash) + word.charCodeAt(i);
-      hash |= 0;
-    }
-    const index = Math.abs(hash) % 1000000;
-    counts[index] = (counts[index] || 0) + 1;
+
+  tokens.forEach(token => {
+    if (token.length < 3) return; // remove noise
+    counts[token] = (counts[token] || 0) + 1;
   });
+
+  const vocabulary = Object.keys(counts);
+
   return {
-    indices: Object.keys(counts).map(Number),
-    values: Object.values(counts).map(v => parseFloat(v.toFixed(2)))
+    indices: vocabulary.map((_, i) => i),
+    values: vocabulary.map(word => Math.log(1 + counts[word]))
   };
 };
 
@@ -280,40 +304,81 @@ app.post("/api/officer/search", async (req, res) => {
     return res.status(400).json({ message: "Query text is required" });
   }
 
+  console.log("\n" + "=".repeat(60));
+  console.log("NEW SEARCH REQUEST - CODE VERSION 2.0");
+  console.log("Query:", queryText);
+  console.log("=".repeat(60));
+
   try {
+    console.log("\n=== SEARCH START ===");
+    console.log("Query:", queryText);
+
+    // Step 1: Get embeddings
+    console.log("Step 1: Getting embeddings...");
     const denseVector = await getEmbedding(queryText);
+    console.log("Dense vector length:", denseVector.length);
+    console.log("First 5 values:", denseVector.slice(0, 5));
+
     const sparseVector = generateSparseVector(queryText);
+    console.log("Sparse vector indices:", sparseVector.indices.length);
+    console.log("Sparse vector values:", sparseVector.values.length);
 
-    // Balanced hybrid search
-    const alpha = 0.5;
-    const weightedDense = denseVector.map(v => v * (1 - alpha));
-    const weightedSparse = {
-      indices: sparseVector.indices,
-      values: sparseVector.values.map(v => v * alpha)
-    };
-
+    // Step 2: Try simple dense-only query first
+    console.log("\nStep 2: Querying Pinecone (dense only)...");
     const index = getPineconeIndex();
-    const queryResponse = await index.query({
-      vector: weightedDense,
-      sparseVector: weightedSparse,
-      topK: 30,
+
+    let queryResponse = await index.query({
+      vector: denseVector,
+      topK: 10,
       includeMetadata: true
     });
 
+    console.log("Dense-only query returned:", queryResponse.matches?.length || 0, "matches");
+
+    if (queryResponse.matches && queryResponse.matches.length > 0) {
+      console.log("Sample match scores:", queryResponse.matches.slice(0, 3).map(m => m.score));
+      console.log("Sample match titles:", queryResponse.matches.slice(0, 3).map(m => m.metadata?.title));
+    }
+
+    // If dense-only works, try hybrid
+    if (queryResponse.matches && queryResponse.matches.length > 0) {
+      console.log("\nStep 3: Trying hybrid search...");
+      const alpha = 0.5;
+      const weightedDense = denseVector.map(v => v * (1 - alpha));
+      const weightedSparse = {
+        indices: sparseVector.indices,
+        values: sparseVector.values.map(v => v * alpha)
+      };
+
+      try {
+        queryResponse = await index.query({
+          vector: weightedDense,
+          sparseVector: weightedSparse,
+          topK: 50,
+          includeMetadata: true
+        });
+        console.log("Hybrid query returned:", queryResponse.matches?.length || 0, "matches");
+      } catch (hybridErr) {
+        console.error("Hybrid query failed:", hybridErr.message);
+        console.log("Falling back to dense-only results");
+        // Keep the dense-only results
+      }
+    }
+
     if (!queryResponse.matches || queryResponse.matches.length === 0) {
-      await new QueryHistory({
-        queryText,
-        topDocumentTitle: "N/A",
-        results: [],
-      }).save();
+      console.log("No matches found - returning empty");
       return res.json({ documents: [] });
     }
 
-    // STEP 1: Deduplicate - keep only best chunk per document
+    console.log("\nStep 4: Deduplicating...");
+    // Deduplicate - keep only best chunk per document
     const bestChunkPerDoc = new Map();
     for (const match of queryResponse.matches) {
       const docId = match.metadata?.docId;
-      if (!docId) continue;
+      if (!docId) {
+        console.log("Skipping match with no docId");
+        continue;
+      }
 
       if (!bestChunkPerDoc.has(docId) || match.score > bestChunkPerDoc.get(docId).score) {
         bestChunkPerDoc.set(docId, {
@@ -329,104 +394,159 @@ app.post("/api/officer/search", async (req, res) => {
     }
 
     const uniqueCandidates = Array.from(bestChunkPerDoc.values());
+    console.log("Unique documents:", uniqueCandidates.length);
+    console.log("Document titles:", uniqueCandidates.map(d => d.title));
 
-    // STEP 2: Re-rank using Voyage AI
+    // 2. RE-RANK WITH INTENT
+    console.log("\nStep 5: Re-ranking with Voyage AI...");
     let rerankedResults = [];
+    const queryLower = queryText.toLowerCase();
+    const isAcademicQuery = /apply|research|grant|faculty|scholarship/i.test(queryLower);
 
     try {
+      // We pass more context to Voyage so it understands the "Intent"
+      console.log("Sending to Voyage for reranking:");
+      uniqueCandidates.forEach((d, i) => {
+        const preview = d.text.substring(0, 150).replace(/\n/g, ' ');
+        console.log(`  [${i}] ${d.title}: "${preview}..."`);
+      });
+
       const rerankResponse = await voyage.rerank({
         query: queryText,
-        documents: uniqueCandidates.map(d => `Title: ${d.title}\nType: ${d.docType}\nYear: ${d.year}\nContent: ${d.text}`),
+        documents: uniqueCandidates.map(d => `Title: ${d.title}\nContent: ${d.text}`),
         topK: 15,
         model: "rerank-2"
       });
 
+      console.log("Rerank successful, got", rerankResponse.data.length, "results");
+
       rerankedResults = rerankResponse.data.map(item => {
         const original = uniqueCandidates[item.index];
+        // Voyage uses camelCase: relevanceScore, not relevance_score
+        let finalScore = item.relevanceScore || item.relevance_score || item.score || 0.5;
+
+        console.log(`  Voyage raw response for item:`, JSON.stringify(item).substring(0, 100));
+        console.log(`  Reranked: ${original.title.substring(0, 40)}... score: ${finalScore.toFixed(3)}`);
+
+        // INTENT GUARD: Penalize "Demand/Budget" docs if user is looking to "Apply"
+        if (isAcademicQuery && /demand|budget|estimate|fiscal/i.test(original.title.toLowerCase())) {
+          finalScore *= 0.2; // 80% penalty for fiscal mismatch
+        }
+
+        // Clean excerpt - remove injected metadata
+        let cleanExcerpt = original.text
+          .replace(/^Document:.*\n/m, '')
+          .replace(/^Authority:.*\n/m, '')
+          .replace(/^Type:.*\n/m, '')
+          .replace(/^Year:.*\n/m, '')
+          .trim();
+
         return {
           _id: original.docId,
           title: original.title,
           authority: original.authority,
           year: original.year,
           docType: original.docType,
-          excerpt: original.text,
-          rawScore: item.relevance_score || 0
+          excerpt: cleanExcerpt,
+          rawScore: finalScore
         };
       });
     } catch (err) {
       console.error("Rerank failed:", err.message);
+      console.log("Using Pinecone scores as fallback");
 
-      // Fallback: use Pinecone scores
-      rerankedResults = uniqueCandidates.slice(0, 15).map(d => ({
-        _id: d.docId,
-        title: d.title,
-        authority: d.authority,
-        year: d.year,
-        docType: d.docType,
-        excerpt: d.text,
-        rawScore: d.pineconeScore / 2.0
-      }));
+      // Fallback uses original Pinecone scores with conservative scaling
+      rerankedResults = uniqueCandidates.slice(0, 15).map(d => {
+        // Pinecone dotproduct scores can be high, normalize more aggressively
+        let score = Math.max(0, d.pineconeScore || 0) / 4.0; // More conservative: divide by 4 instead of 2
+
+        if (isAcademicQuery && /demand|budget|estimate/i.test(d.title.toLowerCase())) {
+          score *= 0.1;
+        }
+        console.log(`  Fallback: ${d.title.substring(0, 40)}... score: ${score.toFixed(3)}`);
+
+        // Clean excerpt
+        let cleanExcerpt = d.text
+          .replace(/^Document:.*\n/m, '')
+          .replace(/^Authority:.*\n/m, '')
+          .replace(/^Type:.*\n/m, '')
+          .replace(/^Year:.*\n/m, '')
+          .trim();
+
+        return {
+          _id: d.docId,
+          title: d.title,
+          authority: d.authority,
+          year: d.year,
+          docType: d.docType,
+          excerpt: cleanExcerpt,
+          rawScore: score
+        };
+      });
     }
 
-    // STEP 3: Apply relevance threshold
-    const RELEVANCE_THRESHOLD = 0.3;
-    let filtered = rerankedResults.filter(doc => doc.rawScore >= RELEVANCE_THRESHOLD);
+    console.log("\nTotal reranked results:", rerankedResults.length);
 
-    if (filtered.length === 0) {
-      await new QueryHistory({
-        queryText,
-        topDocumentTitle: "N/A",
-        results: [],
-      }).save();
-      return res.json({ documents: [] });
-    }
+    // Sort by the new adjusted scores
+    rerankedResults.sort((a, b) => b.rawScore - a.rawScore);
 
-    // STEP 4: Fetch file URLs
-    const docIds = filtered.map(d => d._id);
+    // 3. FETCH DB INFO
+    const docIds = rerankedResults.map(d => d._id);
     const dbDocs = await Document.find({ _id: { $in: docIds } }).select("fileUrl fileName");
     const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
 
-    // STEP 5: Calculate display scores
-    const topRawScore = filtered[0].rawScore;
+    // 4. CALCULATE DISPLAY SCORES with Query-Document Coverage Analysis
+    /* ─── NEW DYNAMIC SCORING LOGIC ─── */
+    console.log("\nStep 5: Calculating dynamic display scores...");
 
-    filtered.forEach((doc, index) => {
+    /* ─── STEP 5: TRUE DYNAMIC SCORING ─── */
+    let filtered = rerankedResults.map((doc, index) => {
       const dbInfo = dbDocMap[doc._id];
       doc.fileUrl = dbInfo?.fileUrl || null;
       doc.fileName = dbInfo?.fileName || null;
 
-      if (index === 0) {
-        doc.score = Math.max(0.85, Math.min(doc.rawScore, 1.0));
-      } else {
-        const relativeScore = doc.rawScore / topRawScore;
+      // Use Voyage's score - balanced mapping for all query types
+      const voyageScore = doc.rawScore;
 
-        if (relativeScore >= 0.90) {
-          doc.score = 0.80 + (relativeScore * 0.15);
-        } else if (relativeScore >= 0.75) {
-          doc.score = 0.65 + (relativeScore * 0.20);
-        } else if (relativeScore >= 0.60) {
-          doc.score = 0.50 + (relativeScore * 0.20);
-        } else {
-          doc.score = relativeScore * 0.55;
-        }
+      // Voyage scores interpretation:
+      // 0.7+ = Excellent, 0.5-0.7 = Good, 0.3-0.5 = Moderate, <0.3 = Weak
+      let displayScore;
+
+      if (voyageScore >= 0.70) {
+        // Excellent: 85-100%
+        displayScore = 0.85 + ((voyageScore - 0.70) / 0.30) * 0.15;
+      } else if (voyageScore >= 0.50) {
+        // Good: 70-85%
+        displayScore = 0.70 + ((voyageScore - 0.50) / 0.20) * 0.15;
+      } else if (voyageScore >= 0.35) {
+        // Moderate: 55-70%
+        displayScore = 0.55 + ((voyageScore - 0.35) / 0.15) * 0.15;
+      } else if (voyageScore >= 0.20) {
+        // Weak: 40-55%
+        displayScore = 0.40 + ((voyageScore - 0.20) / 0.15) * 0.15;
+      } else {
+        // Very weak: <40%
+        displayScore = voyageScore * 2.0;
       }
 
-      doc.score = Math.min(doc.score, 1.0);
+      doc.score = Math.min(displayScore, 1.0);
+
+      console.log(`SCORE -> ${doc.title.substring(0, 30)}... | Voyage: ${voyageScore.toFixed(3)} | Display: ${(doc.score * 100).toFixed(1)}%`);
+
       delete doc.rawScore;
+      return doc;
     });
 
-    // STEP 6: Final filter
-    filtered = filtered.filter(doc => doc.score >= 0.45);
-    filtered = filtered.slice(0, 8);
+    // Final pruning - only show documents with meaningful relevance (>60%)
+    filtered = filtered.filter(doc => doc.score >= 0.60).slice(0, 10);
+    console.log(`Final results: ${filtered.length} documents\n`);
 
-    // Handle non-English content
+    // Handle language formatting
     filtered.forEach(doc => {
       const excerpt = doc.excerpt || "";
       const nonAsciiRatio = (excerpt.match(/[^\x00-\x7F]/g) || []).length / (excerpt.length || 1);
-      const words = excerpt.split(/\s+/).filter(w => w.length > 2);
-      const realWordRatio = words.filter(w => /^[a-zA-Z]{3,}$/.test(w)).length / (words.length || 1);
-
-      if (nonAsciiRatio > 0.3 || realWordRatio < 0.25) {
-        doc.excerpt = "[Content in multiple languages. View full document for details.]";
+      if (nonAsciiRatio > 0.3) {
+        doc.excerpt = "[Document content in Marathi/Hindi. Click 'View Context' for English summary.]";
       }
     });
 
@@ -436,11 +556,20 @@ app.post("/api/officer/search", async (req, res) => {
       results: filtered,
     }).save();
 
+    // Add debug info to first result
+    if (filtered.length > 0) {
+      filtered[0]._debug = {
+        message: "Score calculation working - CODE VERSION 2.0",
+        queryLength: queryText.split(/\s+/).length,
+        isShortQuery: queryText.split(/\s+/).length <= 5
+      };
+    }
+
     res.json({ documents: filtered });
 
   } catch (error) {
     console.error("Search error:", error);
-    res.status(500).json({ message: "Search failed", error: error.message });
+    res.status(500).json({ message: "Internal Search Error", error: error.message });
   }
 });
 /* Officer Ask (RAG) */
@@ -477,7 +606,7 @@ app.post("/api/officer/ask", async (req, res) => {
       .map((m, i) => `[Source ${i + 1}] ${m.metadata.title} (${m.metadata.authority}, ${m.metadata.year}):\n${m.metadata.text}`)
       .join("\n\n---\n\n");
 
-    const generativeModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const generativeModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = `You are an expert assistant for the Department of Higher Education.
 The policy documents below may be written in English, Hindi, or Marathi.
 Read and understand all languages, then answer ONLY in clear English.
@@ -534,84 +663,91 @@ ANSWER (in English):`;
 /* Officer Summarize */
 app.post("/api/officer/summarize", async (req, res) => {
   const { docId, excerptText } = req.body;
-  if (!docId) return res.status(400).json({ message: "docId is required" });
+
+  if (!docId) {
+    return res.status(400).json({ message: "docId is required" });
+  }
 
   try {
     let chunkTexts = "";
 
+    // ✅ 1. Use excerpt directly if available
     if (excerptText && excerptText.trim().length > 20 && !excerptText.startsWith("[")) {
       chunkTexts = excerptText;
-      console.log("Summarize: using excerpt from frontend");
     } else {
+      // ✅ 2. Fetch chunks from Pinecone
       const index = getPineconeIndex();
       let vectorIds = [];
       let nextToken = undefined;
+
       do {
         const listed = await index.listPaginated({
           prefix: `${docId}-chunk-`,
           ...(nextToken && { paginationToken: nextToken }),
         });
+
         vectorIds.push(...(listed.vectors || []).map(v => v.id));
         nextToken = listed.pagination?.next;
+
       } while (nextToken);
 
-      console.log(`Summarize: found ${vectorIds.length} vectors for docId ${docId}`);
-
-      if (!vectorIds.length)
-        return res.json({ summary: "No content found for this document in the knowledge base." });
+      if (!vectorIds.length) {
+        return res.json({ summary: "No content found." });
+      }
 
       const allRecords = {};
+
       for (let i = 0; i < vectorIds.length; i += 100) {
         const batch = vectorIds.slice(i, i + 100);
         const fetched = await index.fetch({ ids: batch });
         Object.assign(allRecords, fetched.records ?? {});
       }
 
-      console.log(`Summarize: fetched ${Object.keys(allRecords).length} records`);
-
-      if (!Object.keys(allRecords).length)
-        return res.json({ summary: "Could not retrieve document content." });
-
       chunkTexts = Object.values(allRecords)
         .sort((a, b) => (a.metadata?.chunkIndex || 0) - (b.metadata?.chunkIndex || 0))
         .map(r => r.metadata?.text || "")
         .filter(t => t.trim().length > 0)
-        .slice(0, 10)
+        .slice(0, 10) // limit for performance
         .join("\n\n");
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    // ✅ 3. Prompt
     const prompt = `You are an expert policy analyst for the Department of Higher Education.
-The document content below may be in English, Hindi, or Marathi (or a mix).
-Read and fully understand the content regardless of language.
-Produce a clear, well-structured summary ONLY in English covering:
-- A 2-3 sentence overview of what this document is about
-- Key points as bullet points
-- Any important figures, deadlines, or eligibility criteria mentioned
+Analyze the content below (English/Hindi/Marathi) and provide a structured summary in English.
+
+Include:
+- A 2-3 sentence overview
+- Key points in bullet format
+- Clear and simple language
 
 DOCUMENT CONTENT:
 ${chunkTexts}
 
 SUMMARY (in English):`;
 
+    // ✅ 4. Gemini call
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const result = await model.generateContent(prompt);
-    res.json({ summary: result.response.text() });
+    const summaryText = result.response.text();
+
+    if (!summaryText || summaryText.trim().length === 0) {
+      throw new Error("Empty response from Gemini");
+    }
+
+    // ✅ 5. Send response
+    res.json({ summary: summaryText });
+
   } catch (error) {
-    console.error("Summarize error:", error.message, error.stack);
-    res.status(500).json({ message: "Summarization failed", error: error.message });
+    console.error("=== SUMMARIZE ERROR ===");
+    console.error("Message:", error.message);
+    console.error("Stack:", error.stack);
+
+    res.status(500).json({
+      message: "Summarization failed",
+      error: error.message,
+    });
   }
 });
-
-/* Officer Query History */
-app.get("/api/officer/history", async (req, res) => {
-  try {
-    const history = await QueryHistory.find().sort({ createdAt: -1 }).limit(20);
-    res.json(history);
-  } catch (err) {
-    res.status(500).send(err);
-  }
-});
-
 /* Test Models Route */
 app.get("/test-models", (req, res) => {
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
