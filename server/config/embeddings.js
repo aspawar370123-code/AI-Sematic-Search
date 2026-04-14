@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import { Pinecone } from "@pinecone-database/pinecone";
 import axios from "axios";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -13,7 +16,7 @@ const pdfParse = require("pdf-parse");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const ai = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const ai = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
 

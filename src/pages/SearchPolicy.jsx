@@ -159,9 +159,9 @@ useEffect(() => {
   authority: doc.authority,
   year: doc.year,
   excerpt: doc.excerpt, // ✅ ADD THIS
-  loading: true,
+  loading: false,
   text: null,
-  error: null,
+  error: err.message || "Failed to generate summary. Please try again.",
 });
     }
   };

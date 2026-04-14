@@ -7,6 +7,10 @@ const ManageDocuments = () => {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
+  // Filter state
+  const [filterType, setFilterType] = useState("");
+  const [filterAuthority, setFilterAuthority] = useState("");
+
   // Rename state
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
@@ -20,7 +24,7 @@ const ManageDocuments = () => {
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents`);
       const data = await res.json();
-      setDocuments(data); // already sorted latest-first by server
+      setDocuments(data);
     } catch (err) {
       console.error("Failed to fetch documents:", err);
     } finally {
@@ -95,11 +99,27 @@ const ManageDocuments = () => {
     setRenameLoading(false);
   }
 };
-  const filtered = documents.filter(doc =>
-    doc.title?.toLowerCase().includes(search.toLowerCase()) ||
-    doc.authority?.toLowerCase().includes(search.toLowerCase()) ||
-    doc.docType?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = documents
+    .filter(doc => {
+      // Search filter
+      const matchesSearch = doc.title?.toLowerCase().includes(search.toLowerCase()) ||
+        doc.authority?.toLowerCase().includes(search.toLowerCase()) ||
+        doc.docType?.toLowerCase().includes(search.toLowerCase());
+      
+      // Type filter
+      const matchesType = !filterType || doc.docType === filterType;
+      
+      // Authority filter
+      const matchesAuthority = !filterAuthority || doc.authority === filterAuthority;
+      
+      return matchesSearch && matchesType && matchesAuthority;
+    })
+    .sort((a, b) => {
+      // Sort by year descending (most recent first)
+      const yearA = a.year === "N/A" ? 0 : parseInt(a.year) || 0;
+      const yearB = b.year === "N/A" ? 0 : parseInt(b.year) || 0;
+      return yearB - yearA;
+    });
 
   return (
     <div style={styles.wrapper}>
@@ -167,6 +187,51 @@ const ManageDocuments = () => {
             onChange={e => setSearch(e.target.value)}
             style={styles.searchInput}
           />
+
+          {/* Filters */}
+          <div style={styles.filtersRow}>
+            <div style={styles.filterGroup}>
+              <label style={styles.filterLabel}>Filter by Type:</label>
+              <select 
+                value={filterType} 
+                onChange={e => setFilterType(e.target.value)}
+                style={styles.filterSelect}
+              >
+                <option value="">All Types</option>
+                <option value="Policy">Policy</option>
+                <option value="Regulation">Regulation</option>
+                <option value="Report">Report</option>
+                <option value="Scheme">Scheme</option>
+              </select>
+            </div>
+
+            <div style={styles.filterGroup}>
+              <label style={styles.filterLabel}>Filter by Authority:</label>
+              <select 
+                value={filterAuthority} 
+                onChange={e => setFilterAuthority(e.target.value)}
+                style={styles.filterSelect}
+              >
+                <option value="">All Authorities</option>
+                <option value="UGC">UGC</option>
+                <option value="AICTE">AICTE</option>
+                <option value="Ministry of Education">Ministry of Education</option>
+                <option value="MoE">MoE</option>
+              </select>
+            </div>
+
+            {(filterType || filterAuthority) && (
+              <button 
+                style={styles.clearFiltersBtn}
+                onClick={() => {
+                  setFilterType("");
+                  setFilterAuthority("");
+                }}
+              >
+                Clear Filters
+              </button>
+            )}
+          </div>
 
           {/* Table */}
           <div style={styles.tableWrapper}>
@@ -343,9 +408,33 @@ const styles = {
     width: "100%", padding: "14px 20px",
     fontSize: "14px", borderRadius: "10px",
     border: "1px solid #e2e8f0", outline: "none",
-    marginBottom: "24px", boxSizing: "border-box",
+    marginBottom: "20px", boxSizing: "border-box",
     backgroundColor: "#ffffff",
     boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+  },
+  filtersRow: {
+    display: "flex", gap: "16px", alignItems: "flex-end",
+    marginBottom: "24px", flexWrap: "wrap",
+  },
+  filterGroup: {
+    display: "flex", flexDirection: "column", gap: "6px",
+  },
+  filterLabel: {
+    fontSize: "12px", fontWeight: "600", color: "#475569",
+    textTransform: "uppercase", letterSpacing: "0.5px",
+  },
+  filterSelect: {
+    padding: "10px 14px", fontSize: "14px",
+    borderRadius: "8px", border: "1px solid #e2e8f0",
+    backgroundColor: "#ffffff", color: "#1e293b",
+    outline: "none", cursor: "pointer",
+    minWidth: "180px",
+  },
+  clearFiltersBtn: {
+    padding: "10px 20px", fontSize: "13px", fontWeight: "600",
+    borderRadius: "8px", border: "1px solid #e2e8f0",
+    backgroundColor: "#f8fafc", color: "#475569",
+    cursor: "pointer",
   },
   tableWrapper: {
     backgroundColor: "#ffffff", borderRadius: "16px",

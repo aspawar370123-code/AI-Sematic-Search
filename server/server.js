@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
@@ -23,7 +23,7 @@ import upload from "./config/multerCloudinary.js";
 import cloudinary from "./config/cloudinary.js";
 
 const app = express();
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
 
 app.use(cors({
@@ -245,6 +245,19 @@ app.delete("/documents/:id", async (req, res) => {
   } catch (error) {
     console.error("Delete route error:", error);
     res.status(500).json({ message: "Delete failed", error: error.message });
+  }
+});
+
+/* Query History */
+app.get("/api/officer/history", async (req, res) => {
+  try {
+    const history = await QueryHistory.find()
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json(history);
+  } catch (error) {
+    console.error("History fetch error:", error);
+    res.status(500).json({ message: "Failed to fetch history", error: error.message });
   }
 });
 
@@ -606,7 +619,6 @@ app.post("/api/officer/ask", async (req, res) => {
       .map((m, i) => `[Source ${i + 1}] ${m.metadata.title} (${m.metadata.authority}, ${m.metadata.year}):\n${m.metadata.text}`)
       .join("\n\n---\n\n");
 
-    const generativeModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = `You are an expert assistant for the Department of Higher Education.
 The policy documents below may be written in English, Hindi, or Marathi.
 Read and understand all languages, then answer ONLY in clear English.
@@ -620,8 +632,12 @@ ${contextChunks}
 
 ANSWER (in English):`;
 
-    const genResult = await generativeModel.generateContent(prompt);
-    const answer = genResult.response.text();
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1024,
+    });
+    const answer = completion.choices[0]?.message?.content || "No answer generated.";
 
     const bestChunkPerDoc = new Map();
     for (const m of matches) {
@@ -725,10 +741,13 @@ ${chunkTexts}
 
 SUMMARY (in English):`;
 
-    // ✅ 4. Gemini call
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const result = await model.generateContent(prompt);
-    const summaryText = result.response.text();
+    // ✅ 4. Groq call
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1024,
+    });
+    const summaryText = completion.choices[0]?.message?.content || "No summary generated.";
 
     if (!summaryText || summaryText.trim().length === 0) {
       throw new Error("Empty response from Gemini");
