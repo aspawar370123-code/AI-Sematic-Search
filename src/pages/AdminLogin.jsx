@@ -13,47 +13,47 @@ export default function AdminAuthPage() {
         document.body.style.overflow = "hidden";
         return () => { document.body.style.overflow = "auto"; };
     }, []);
-    
+
     const handleSubmit = async (e) => {
 
-    e.preventDefault();
+        e.preventDefault();
 
-    if (isLogin) {
+        if (isLogin) {
 
-        const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/login`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(formData)
-        });
+            const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/login`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(formData)
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (response.ok) {
-            alert("Login successful");
-            navigate("/admin/dashboard");
+            if (response.ok) {
+                alert("Login successful");
+                navigate("/admin/dashboard");
+            } else {
+                alert(data.message);
+            }
+
         } else {
+
+            const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/register`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(formData)
+            });
+
+            const data = await response.json();
+
             alert(data.message);
+
         }
 
-    } else {
-
-        const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/register`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(formData)
-        });
-
-        const data = await response.json();
-
-        alert(data.message);
-
-    }
-
-};
+    };
 
     return (
         <div style={styles.wrapper}>
@@ -72,7 +72,7 @@ export default function AdminAuthPage() {
                         <span style={styles.portalIcon}>🔐</span>
                         <h2 style={styles.portalHeader}>Official Admin Portal</h2>
                         <p style={styles.portalDescription}>
-                            Secure access for authorized department personnel only. 
+                            Secure access for authorized department personnel only.
                             Please use your government-issued credentials.
                         </p>
                     </div>
@@ -93,38 +93,38 @@ export default function AdminAuthPage() {
                             <div style={styles.inputGroup}>
                                 <label style={styles.label}>Full Name</label>
                                 <input
-    type="text"
-    placeholder="Enter your name"
-    style={styles.input}
-    value={formData.name}
-    onChange={(e)=>setFormData({...formData, name:e.target.value})}
-    required
-/>
+                                    type="text"
+                                    placeholder="Enter your name"
+                                    style={styles.input}
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    required
+                                />
                             </div>
                         )}
 
                         <div style={styles.inputGroup}>
                             <label style={styles.label}>Official Email</label>
                             <input
-    type="email"
-    placeholder="name@nic.in"
-    style={styles.input}
-    value={formData.email}
-    onChange={(e)=>setFormData({...formData, email:e.target.value})}
-    required
-/>
+                                type="email"
+                                placeholder="name@nic.in"
+                                style={styles.input}
+                                value={formData.email}
+                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                required
+                            />
                         </div>
 
                         <div style={styles.inputGroup}>
                             <label style={styles.label}>Password</label>
                             <input
-    type="password"
-    placeholder="••••••••"
-    style={styles.input}
-    value={formData.password}
-    onChange={(e)=>setFormData({...formData, password:e.target.value})}
-    required
-/>
+                                type="password"
+                                placeholder="••••••••"
+                                style={styles.input}
+                                value={formData.password}
+                                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                required
+                            />
                             {isLogin && (
                                 <span style={styles.forgotPassword}>Forgot Password?</span>
                             )}
@@ -137,8 +137,8 @@ export default function AdminAuthPage() {
 
                     <div style={styles.toggleText}>
                         {isLogin ? "New administrator?" : "Already have an account?"}{" "}
-                        <span 
-                            style={styles.toggleLink} 
+                        <span
+                            style={styles.toggleLink}
                             onClick={() => setIsLogin(!isLogin)}
                         >
                             {isLogin ? "Create an account" : "Sign in here"}

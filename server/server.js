@@ -783,6 +783,60 @@ app.post("/api/officer/search", async (req, res) => {
   }
 });
 
+/* Summarize endpoint - generates AI summary of document excerpt */
+app.post("/api/officer/summarize", async (req, res) => {
+  const { docId, excerptText } = req.body;
+  
+  if (!docId || !excerptText) {
+    return res.status(400).json({ message: "Document ID and excerpt text are required" });
+  }
+
+  console.log(`\n=== SUMMARIZE REQUEST ===`);
+  console.log(`Document ID: ${docId}`);
+  console.log(`Excerpt length: ${excerptText.length} chars`);
+
+  try {
+    // Use Groq to generate a summary of the excerpt
+    const completion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert policy analyst. Your task is to provide a clear, structured summary of policy document excerpts. 
+          
+Guidelines:
+- If the text is in Hindi or Marathi, translate it to English
+- Extract key points, requirements, and actionable information
+- Use bullet points and numbered lists for clarity
+- Highlight important terms in **bold**
+- Keep the summary concise but comprehensive
+- Focus on practical information that officers need to know`
+        },
+        {
+          role: "user",
+          content: `Summarize this policy document excerpt:\n\n${excerptText}`
+        }
+      ],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.3,
+      max_tokens: 1024,
+    });
+
+    const summary = completion.choices[0]?.message?.content || "Unable to generate summary.";
+    
+    console.log(`✓ Summary generated (${summary.length} chars)`);
+    console.log(`=== SUMMARIZE COMPLETE ===\n`);
+
+    res.json({ summary });
+
+  } catch (error) {
+    console.error("Summarize error:", error);
+    res.status(500).json({ 
+      message: "Failed to generate summary", 
+      error: error.message 
+    });
+  }
+});
+
 
 
 /* Query History */
