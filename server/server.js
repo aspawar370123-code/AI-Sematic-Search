@@ -24,7 +24,6 @@ import cloudinary from "./config/cloudinary.js";
 
 const app = express();
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
 
 app.use(cors({
   origin: true, // reflects the request origin — allows any origin including localhost and deployed frontend
@@ -68,8 +67,8 @@ const getEmbedding = async (text) => {
 
 /* ─── Routes ─────────────────────────────────────────────────── */
 
-app.get("/", (req, res) => res.json({ 
-  status: "running", 
+app.get("/", (req, res) => res.json({
+  status: "running",
   message: "AI Document System API",
   endpoints: {
     health: "/health",
@@ -412,12 +411,12 @@ app.post("/api/officer/search", async (req, res) => {
     // STEP 1: Decompose query into sub-queries
     console.log("\n[1/6] Decomposing query into sub-queries...");
     const subQueries = [queryText]; // Start with original
-    
+
     // Generate 2-3 variations
     const words = queryText.toLowerCase().split(/\s+/);
     const hasYear = words.some(w => /\d{4}/.test(w));
     const hasDocument = words.some(w => ['report', 'policy', 'document', 'scheme'].includes(w));
-    
+
     // Variation 1: Simplified (remove filler words)
     const simplified = words
       .filter(w => !['what', 'are', 'the', 'is', 'in', 'of', 'as', 'listed'].includes(w))
@@ -425,41 +424,41 @@ app.post("/api/officer/search", async (req, res) => {
     if (simplified !== queryText.toLowerCase()) {
       subQueries.push(simplified);
     }
-    
+
     // Variation 2: Focus on key terms
     const keyTerms = words.filter(w => w.length > 4).slice(0, 5).join(' ');
     if (keyTerms && keyTerms !== simplified) {
       subQueries.push(keyTerms);
     }
-    
+
     // Variation 3: If mentions document type, create focused query
     if (hasDocument) {
-      const docFocused = words.filter(w => 
+      const docFocused = words.filter(w =>
         !['what', 'are', 'the', 'how', 'when', 'where'].includes(w)
       ).join(' ');
       if (docFocused !== queryText.toLowerCase() && !subQueries.includes(docFocused)) {
         subQueries.push(docFocused);
       }
     }
-    
+
     console.log(`Generated ${subQueries.length} sub-queries:`);
     subQueries.forEach((q, i) => console.log(`  ${i + 1}. "${q}"`));
 
     // STEP 2: Retrieve top-20 per sub-query
     console.log("\n[2/6] Retrieving chunks for each sub-query...");
     const allChunks = new Map(); // Use Map to deduplicate by chunk ID
-    
+
     for (let i = 0; i < subQueries.length; i++) {
       const subQuery = subQueries[i];
       console.log(`  Query ${i + 1}/${subQueries.length}: "${subQuery.substring(0, 50)}..."`);
-      
+
       const embedding = await getEmbedding(subQuery);
       const response = await index.query({
         vector: embedding,
         topK: 20,
         includeMetadata: true
       });
-      
+
       response.matches?.forEach((match, rank) => {
         const chunkId = match.id;
         if (!allChunks.has(chunkId)) {
@@ -481,7 +480,7 @@ app.post("/api/officer/search", async (req, res) => {
         }
       });
     }
-    
+
     const chunks = Array.from(allChunks.values()).filter(c => c.docId && c.text);
     console.log(`✓ Retrieved ${chunks.length} unique chunks (after deduplication)`);
     console.log(`  Chunks found by multiple queries: ${chunks.filter(c => c.retrievedBy.length > 1).length}`);
@@ -501,34 +500,34 @@ app.post("/api/officer/search", async (req, res) => {
         originalText: chunk.text
       };
     });
-    
+
     console.log(`✓ Enriched ${enrichedChunks.length} chunks with metadata`);
 
     // STEP 4: Rerank with Jina
     console.log("\n[4/6] Reranking chunks with Jina...");
     const t4 = Date.now();
-    
+
     // Truncate enriched text for reranker (max 1000 chars)
-    const textsForRerank = enrichedChunks.map(c => 
-      c.enrichedText.length > 1000 
+    const textsForRerank = enrichedChunks.map(c =>
+      c.enrichedText.length > 1000
         ? c.enrichedText.substring(0, 1000) + '...'
         : c.enrichedText
     );
-    
+
     const reranked = await rerankDocs(queryText, textsForRerank);
     console.log(`✓ Reranking completed in ${Date.now() - t4}ms`);
-    
+
     // Attach rerank scores and ranks
     enrichedChunks.forEach((chunk, idx) => {
       chunk.rerankScore = reranked[idx]?.score || 0;
     });
-    
+
     // Sort by rerank score to get ranks
     const sortedByRerank = [...enrichedChunks].sort((a, b) => b.rerankScore - a.rerankScore);
     sortedByRerank.forEach((chunk, idx) => {
       chunk.rerankRank = idx + 1;
     });
-    
+
     console.log("\nTop 5 after reranking:");
     sortedByRerank.slice(0, 5).forEach((c, i) => {
       console.log(`  ${i + 1}. [${c.rerankScore.toFixed(4)}] ${c.title}`);
@@ -538,14 +537,14 @@ app.post("/api/officer/search", async (req, res) => {
     console.log("\n[5/6] Applying source-mention boost...");
     const queryLower = queryText.toLowerCase();
     const mentionedDocs = [];
-    
+
     // Detect if query mentions specific documents
     enrichedChunks.forEach(chunk => {
       const titleWords = chunk.title.toLowerCase().split(/\s+/);
-      const matchedWords = titleWords.filter(word => 
+      const matchedWords = titleWords.filter(word =>
         word.length > 3 && queryLower.includes(word)
       );
-      
+
       if (matchedWords.length >= 2) {
         chunk.sourceBoost = 1.3; // 30% boost
         if (!mentionedDocs.includes(chunk.title)) {
@@ -555,7 +554,7 @@ app.post("/api/officer/search", async (req, res) => {
         chunk.sourceBoost = 1.0;
       }
     });
-    
+
     if (mentionedDocs.length > 0) {
       console.log(`✓ Boosting ${mentionedDocs.length} explicitly mentioned documents:`);
       mentionedDocs.forEach(doc => console.log(`  - ${doc} (1.3x boost)`));
@@ -566,22 +565,22 @@ app.post("/api/officer/search", async (req, res) => {
     // STEP 6: RRF Fusion
     console.log("\n[6/6] Applying RRF fusion...");
     const k = 30; // RRF constant (lower = more emphasis on top ranks)
-    
+
     enrichedChunks.forEach(chunk => {
       // RRF formula: 1/(k + rank)
       const pineconeRRF = 1 / (k + chunk.pineconeRank);
       const rerankRRF = 1 / (k + chunk.rerankRank);
-      
+
       // Multi-query bonus: chunks found by multiple queries get boost
       const multiQueryBoost = 1 + (chunk.retrievedBy.length - 1) * 0.1; // +10% per extra query
-      
+
       // Combined RRF score with source boost
       chunk.rrfScore = (pineconeRRF + rerankRRF) * chunk.sourceBoost * multiQueryBoost;
     });
-    
+
     // Sort by final RRF score
     enrichedChunks.sort((a, b) => b.rrfScore - a.rrfScore);
-    
+
     console.log("\nTop 10 after RRF fusion:");
     enrichedChunks.slice(0, 10).forEach((c, i) => {
       const boost = c.sourceBoost > 1 ? ' [BOOSTED]' : '';
@@ -592,7 +591,7 @@ app.post("/api/officer/search", async (req, res) => {
     // Group by document - keep BEST chunk per document
     console.log("\n[7/6] Grouping by document...");
     const docChunksMap = new Map();
-    
+
     // First, group all chunks by document
     enrichedChunks.forEach(chunk => {
       if (!docChunksMap.has(chunk.docId)) {
@@ -600,14 +599,14 @@ app.post("/api/officer/search", async (req, res) => {
       }
       docChunksMap.get(chunk.docId).push(chunk);
     });
-    
+
     // Then, for each document, select the chunk with HIGHEST rerank score
     let results = [];
     docChunksMap.forEach((chunks, docId) => {
       // Sort by rerank score (most important metric)
       chunks.sort((a, b) => b.rerankScore - a.rerankScore);
       const bestChunk = chunks[0];
-      
+
       results.push({
         _id: docId,
         title: bestChunk.title,
@@ -623,15 +622,15 @@ app.post("/api/officer/search", async (req, res) => {
         totalChunks: chunks.length // Track how many chunks this document has
       });
     });
-    
+
     // CHUNK FREQUENCY BOOST: Smart boosting using RRF scores
     console.log("\n[8/6] Applying smart chunk frequency boost...");
-    
+
     // Get top 10 chunks by rerank score
     const top10Chunks = [...enrichedChunks]
       .sort((a, b) => b.rerankScore - a.rerankScore)
       .slice(0, 10);
-    
+
     // Count frequency and calculate average RRF per document
     const docStats = {};
     top10Chunks.forEach(chunk => {
@@ -641,23 +640,23 @@ app.post("/api/officer/search", async (req, res) => {
       docStats[chunk.docId].frequency++;
       docStats[chunk.docId].rrfScores.push(chunk.rrfScore);
     });
-    
+
     // Apply smart boost to documents
     results.forEach(doc => {
       const stats = docStats[doc._id];
       if (!stats) return; // Document not in top 10
-      
+
       const frequency = stats.frequency;
       const avgRRF = stats.rrfScores.reduce((sum, s) => sum + s, 0) / stats.rrfScores.length;
       const multiQueryCount = doc.retrievedByCount;
       const baseScore = doc.rerankScore;
-      
+
       // Only boost if: 3+ chunks, 2+ queries, and score is 30-60%
       if (frequency >= 3 && multiQueryCount >= 2 && baseScore >= 0.3 && baseScore < 0.6) {
-        
+
         // Smart boost formula: considers frequency, RRF agreement, and multi-query
-        let boost = (frequency * 0.02) + (avgRRF * 0.3) + (multiQueryCount * 0.01);
-        
+        let boost = (frequency * 0.03) + (multiQueryCount * 0.05) + (avgRRF * 0.1);
+
         // Reduce boost for scores already close to threshold
         if (baseScore >= 0.5 && baseScore < 0.55) {
           boost = boost * 0.65; // 65% of boost (35% reduction) for 50-55%
@@ -665,10 +664,10 @@ app.post("/api/officer/search", async (req, res) => {
           boost = boost * 0.60; // 60% of boost (40% reduction) for 55-60%
         }
         // else: full boost for scores 30-50%
-        
+
         const oldScore = doc.rerankScore;
         doc.rerankScore = Math.min(doc.rerankScore + boost, 0.75); // Cap at 75%
-        
+
         console.log(`  ✓ Boosted "${doc.title.substring(0, 40)}..."`);
         console.log(`    - ${frequency} chunks in top 10, avg RRF: ${avgRRF.toFixed(4)}, ${multiQueryCount} queries`);
         console.log(`    - Score: ${(oldScore * 100).toFixed(1)}% → ${(doc.rerankScore * 100).toFixed(1)}% (+${(boost * 100).toFixed(1)}%)`);
@@ -681,55 +680,28 @@ app.post("/api/officer/search", async (req, res) => {
         }
       }
     });
-    
+
     // Sort by rerank score (now includes frequency boost)
     results.sort((a, b) => b.rerankScore - a.rerankScore);
-    
+
     console.log(`\nFound ${results.length} unique documents`);
-    
-    // STRICT FILTERING: Only show highly relevant documents
-    const topDoc = results[0];
-    const topRerankScore = topDoc?.rerankScore || 0;
-    
-    // Minimum confidence threshold: 50%
-    // If top document is below 50%, show "No results found"
-    if (topRerankScore < 0.5) {
-      console.log(`⚠️ Top document confidence too low (${(topRerankScore * 100).toFixed(1)}% < 50%)`);
-      console.log(`Showing "No results found" instead of low-confidence results`);
-      return res.json({ 
+
+    // STRICT FILTERING: Hard 60% threshold - only show highly relevant documents
+    const filtered = results.filter(doc => doc.rerankScore >= 0.60);
+
+    if (filtered.length === 0) {
+      console.log(`⚠️ No documents meet 60% relevance threshold`);
+      return res.json({
         documents: [],
         message: "No sufficiently relevant documents found. Try rephrasing your query with more specific terms."
       });
     }
-    
-    // Strategy 1: If top doc is HIGH confidence (>= 0.6), only show docs >= 0.5
-    // Strategy 2: If top doc is GOOD confidence (0.5-0.6), only show docs >= 0.4
-    
-    let filtered = [];
-    
-    if (topRerankScore >= 0.6) {
-      // High confidence top result - only show other HIGH confidence docs
-      filtered = results.filter(doc => doc.rerankScore >= 0.5);
-      console.log(`Top doc is HIGH confidence (${topRerankScore.toFixed(3)}), filtering for >= 0.5`);
-    } else {
-      // Good confidence (0.5-0.6) - show docs >= 0.4
-      filtered = results.filter(doc => doc.rerankScore >= 0.4);
-      console.log(`Top doc is GOOD confidence (${topRerankScore.toFixed(3)}), filtering for >= 0.4`);
-    }
-    
-    if (filtered.length === 0) {
-      console.log(`⚠️ No documents meet relevance threshold`);
-      return res.json({ 
-        documents: [],
-        message: "No sufficiently relevant documents found. Try rephrasing your query."
-      });
-    }
-    
-    console.log(`Filtered to ${filtered.length} documents`);
-    
+
+    console.log(`Filtered to ${filtered.length} documents (60%+ threshold)`);
+
     // Show top 5 documents max
     results = filtered.slice(0, 5);
-    
+
     // Calculate percentages based on ACTUAL rerank scores, not relative distribution
     if (results.length === 1) {
       // Single document: show its actual confidence (rerank score * 100)
@@ -744,37 +716,37 @@ app.post("/api/officer/search", async (req, res) => {
         doc.score = doc.rrfScore / totalScore;
         doc.scorePercent = (doc.rrfScore / totalScore) * 100;
       });
-      
+
       // Verify sum is 100%
       const sumCheck = results.reduce((sum, d) => sum + d.scorePercent, 0);
       console.log(`Score distribution check: ${sumCheck.toFixed(2)}% (should be 100%)`);
     }
-    
+
     // Fetch file URLs from MongoDB
     const docIds = results.map(r => r._id);
     const dbDocs = await Document.find({ _id: { $in: docIds } }).lean();
     const dbMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
-    
+
     results = results.map(doc => {
       const dbInfo = dbMap[doc._id];
       doc.fileUrl = dbInfo?.fileUrl || null;
       doc.fileName = dbInfo?.fileName || null;
-      
+
       const boost = doc.sourceBoost > 1 ? ' [BOOSTED]' : '';
       const confidence = doc.rerankScore >= 0.6 ? 'HIGH' : doc.rerankScore >= 0.4 ? 'GOOD' : 'MODERATE';
       console.log(`  → ${doc.title.substring(0, 40)}... | ${doc.scorePercent.toFixed(1)}% | Rerank: ${doc.rerankScore.toFixed(3)} (${confidence})${boost}`);
       return doc;
     });
-    
+
     console.log(`\n⏱ Total time: ${Date.now() - startTime}ms`);
-    
+
     // Save to history
     await new QueryHistory({
       query: queryText,
       results: results.map(d => d.title),
       timestamp: new Date()
     }).save();
-    
+
     res.json({ documents: results });
 
   } catch (error) {
@@ -786,7 +758,7 @@ app.post("/api/officer/search", async (req, res) => {
 /* Summarize endpoint - generates AI summary of document excerpt */
 app.post("/api/officer/summarize", async (req, res) => {
   const { docId, excerptText } = req.body;
-  
+
   if (!docId || !excerptText) {
     return res.status(400).json({ message: "Document ID and excerpt text are required" });
   }
@@ -822,7 +794,7 @@ Guidelines:
     });
 
     const summary = completion.choices[0]?.message?.content || "Unable to generate summary.";
-    
+
     console.log(`✓ Summary generated (${summary.length} chars)`);
     console.log(`=== SUMMARIZE COMPLETE ===\n`);
 
@@ -830,9 +802,9 @@ Guidelines:
 
   } catch (error) {
     console.error("Summarize error:", error);
-    res.status(500).json({ 
-      message: "Failed to generate summary", 
-      error: error.message 
+    res.status(500).json({
+      message: "Failed to generate summary",
+      error: error.message
     });
   }
 });
