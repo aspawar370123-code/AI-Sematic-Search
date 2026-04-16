@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 server/.env
+
+# Python virtual environment
+jina_env/
+huggingface-embedding/
