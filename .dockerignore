@@ -1,0 +1,14 @@
+node_modules
+jina_env
+bge_env
+.git
+.gitignore
+*.md
+.env
+.vscode
+__pycache__
+*.pyc
+.DS_Store
+dist
+build
+.cache

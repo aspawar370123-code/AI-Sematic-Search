@@ -33,7 +33,19 @@ app.use(cors({
 }));
 app.options("/{*path}", cors()); // handle preflight for all routes
 app.use(express.json());
+import axios from "axios";
 
+// Embedding service URL - use environment variable for production
+const EMBEDDING_SERVICE_URL = process.env.EMBEDDING_SERVICE_URL || "http://127.0.0.1:5001";
+
+export const rerankDocs = async (query, documents) => {
+  const res = await axios.post(`${EMBEDDING_SERVICE_URL}/rerank`, {
+    query,
+    documents,
+  });
+
+  return res.data.results;
+};
 /* MongoDB Connection */
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("MongoDB Atlas Connected"))
@@ -46,13 +58,30 @@ const getPineconeIndex = () => {
   return pc.index(process.env.PINECONE_INDEX);
 };
 const getEmbedding = async (text) => {
-  const result = await voyage.embed({ input: [text], model: "voyage-3-lite" });
-  return result.data[0].embedding;
+  const EMBEDDING_SERVICE_URL = process.env.EMBEDDING_SERVICE_URL || "http://127.0.0.1:5001";
+  const res = await axios.post(`${EMBEDDING_SERVICE_URL}/embed`, {
+    texts: ["query: " + text]
+  });
+
+  return res.data.embeddings[0];
 };
 
 /* ─── Routes ─────────────────────────────────────────────────── */
 
-app.get("/", (req, res) => res.send("Server running"));
+app.get("/", (req, res) => res.json({ 
+  status: "running", 
+  message: "AI Document System API",
+  endpoints: {
+    health: "/health",
+    testPinecone: "/test-pinecone",
+    upload: "/upload",
+    documents: "/documents",
+    search: "/api/officer/search",
+    ask: "/api/officer/ask"
+  }
+}));
+
+app.get("/health", (req, res) => res.json({ status: "healthy", timestamp: new Date().toISOString() }));
 
 // Test endpoint to check Pinecone
 app.get("/test-pinecone", async (req, res) => {
@@ -215,31 +244,85 @@ app.delete("/documents/:id", async (req, res) => {
     const doc = await Document.findById(req.params.id);
     if (!doc) return res.status(404).json({ message: "Document not found" });
 
+    console.log(`\n=== DELETING DOCUMENT: ${req.params.id} ===`);
+
     // 1. Delete from Cloudinary
     try {
       await cloudinary.uploader.destroy(doc.cloudinaryId);
+      console.log("✓ Deleted from Cloudinary");
     } catch (err) {
       console.error("Cloudinary delete failed, trying raw...", err.message);
-      await cloudinary.uploader.destroy(doc.cloudinaryId, { resource_type: "raw" });
+      try {
+        await cloudinary.uploader.destroy(doc.cloudinaryId, { resource_type: "raw" });
+        console.log("✓ Deleted from Cloudinary (raw)");
+      } catch (err2) {
+        console.error("Cloudinary cleanup failed completely:", err2.message);
+      }
     }
 
-    // 2. Delete from Pinecone
+    // 2. Delete from Pinecone - with proper pagination
     try {
       const index = getPineconeIndex();
-      const listResponse = await index.listPaginated({ prefix: `${req.params.id}-` });
-      const vectorIds = (listResponse.vectors || []).map(v => v.id);
-      if (vectorIds.length > 0) {
-        console.log(`Deleting ${vectorIds.length} vectors for doc: ${req.params.id}`);
-        await index.deleteMany(vectorIds);
+      let allVectorIds = [];
+      let paginationToken = undefined;
+
+      console.log(`Searching for vectors with prefix: ${req.params.id}-`);
+
+      // Paginate through all vectors with this document ID
+      do {
+        const listResponse = await index.listPaginated({
+          prefix: `${req.params.id}-`,
+          limit: 100,
+          ...(paginationToken && { paginationToken })
+        });
+
+        const vectorIds = (listResponse.vectors || []).map(v => v.id);
+        allVectorIds.push(...vectorIds);
+
+        paginationToken = listResponse.pagination?.next;
+
+        console.log(`Found ${vectorIds.length} vectors in this batch`);
+      } while (paginationToken);
+
+      if (allVectorIds.length > 0) {
+        console.log(`Deleting ${allVectorIds.length} total vectors from Pinecone...`);
+
+        // Delete in batches of 100 (Pinecone limit)
+        for (let i = 0; i < allVectorIds.length; i += 100) {
+          const batch = allVectorIds.slice(i, i + 100);
+
+          try {
+            // Pinecone deleteMany expects just the array of IDs
+            await index.deleteMany(batch);
+            console.log(`✓ Deleted batch ${Math.floor(i / 100) + 1} (${batch.length} vectors)`);
+          } catch (batchErr) {
+            console.error(`❌ Failed to delete batch ${Math.floor(i / 100) + 1}:`, batchErr.message);
+            // Try alternative method: delete by filter
+            try {
+              console.log("Trying alternative delete method...");
+              for (const id of batch) {
+                await index.deleteOne(id);
+              }
+              console.log(`✓ Deleted batch ${Math.floor(i / 100) + 1} using deleteOne`);
+            } catch (altErr) {
+              console.error("Alternative delete also failed:", altErr.message);
+            }
+          }
+        }
+
+        console.log(`✓ All ${allVectorIds.length} vectors deleted from Pinecone`);
       } else {
-        console.log("No vectors found in Pinecone for this ID prefix.");
+        console.log("⚠️ No vectors found in Pinecone for this document");
       }
     } catch (vectorErr) {
-      console.error("Pinecone cleanup failed:", vectorErr.message);
+      console.error("❌ Pinecone cleanup failed:", vectorErr.message);
+      // Don't fail the whole delete if Pinecone fails
     }
 
     // 3. Delete from MongoDB
     await Document.findByIdAndDelete(req.params.id);
+    console.log("✓ Deleted from MongoDB");
+    console.log("=== DELETE COMPLETE ===\n");
 
     res.json({ message: "Document deleted successfully" });
   } catch (error) {
@@ -312,490 +395,426 @@ const generateSparseVector = (text) => {
 
 app.post("/api/officer/search", async (req, res) => {
   const { queryText } = req.body;
+  const startTime = Date.now();
 
   if (!queryText?.trim()) {
     return res.status(400).json({ message: "Query text is required" });
   }
 
   console.log("\n" + "=".repeat(60));
-  console.log("NEW SEARCH REQUEST - CODE VERSION 2.0");
+  console.log("ADVANCED SEARCH - Multi-Query + RRF Fusion");
   console.log("Query:", queryText);
   console.log("=".repeat(60));
 
   try {
-    console.log("\n=== SEARCH START ===");
-    console.log("Query:", queryText);
-
-    // Step 1: Get embeddings
-    console.log("Step 1: Getting embeddings...");
-    const denseVector = await getEmbedding(queryText);
-    console.log("Dense vector length:", denseVector.length);
-    console.log("First 5 values:", denseVector.slice(0, 5));
-
-    const sparseVector = generateSparseVector(queryText);
-    console.log("Sparse vector indices:", sparseVector.indices.length);
-    console.log("Sparse vector values:", sparseVector.values.length);
-
-    // Step 2: Try simple dense-only query first
-    console.log("\nStep 2: Querying Pinecone (dense only)...");
     const index = getPineconeIndex();
 
-    let queryResponse = await index.query({
-      vector: denseVector,
-      topK: 10,
-      includeMetadata: true
-    });
-
-    console.log("Dense-only query returned:", queryResponse.matches?.length || 0, "matches");
-
-    if (queryResponse.matches && queryResponse.matches.length > 0) {
-      console.log("Sample match scores:", queryResponse.matches.slice(0, 3).map(m => m.score));
-      console.log("Sample match titles:", queryResponse.matches.slice(0, 3).map(m => m.metadata?.title));
+    // STEP 1: Decompose query into sub-queries
+    console.log("\n[1/6] Decomposing query into sub-queries...");
+    const subQueries = [queryText]; // Start with original
+    
+    // Generate 2-3 variations
+    const words = queryText.toLowerCase().split(/\s+/);
+    const hasYear = words.some(w => /\d{4}/.test(w));
+    const hasDocument = words.some(w => ['report', 'policy', 'document', 'scheme'].includes(w));
+    
+    // Variation 1: Simplified (remove filler words)
+    const simplified = words
+      .filter(w => !['what', 'are', 'the', 'is', 'in', 'of', 'as', 'listed'].includes(w))
+      .join(' ');
+    if (simplified !== queryText.toLowerCase()) {
+      subQueries.push(simplified);
     }
-
-    // If dense-only works, try hybrid
-    if (queryResponse.matches && queryResponse.matches.length > 0) {
-      console.log("\nStep 3: Trying hybrid search...");
-      const alpha = 0.5;
-      const weightedDense = denseVector.map(v => v * (1 - alpha));
-      const weightedSparse = {
-        indices: sparseVector.indices,
-        values: sparseVector.values.map(v => v * alpha)
-      };
-
-      try {
-        queryResponse = await index.query({
-          vector: weightedDense,
-          sparseVector: weightedSparse,
-          topK: 50,
-          includeMetadata: true
-        });
-        console.log("Hybrid query returned:", queryResponse.matches?.length || 0, "matches");
-      } catch (hybridErr) {
-        console.error("Hybrid query failed:", hybridErr.message);
-        console.log("Falling back to dense-only results");
-        // Keep the dense-only results
+    
+    // Variation 2: Focus on key terms
+    const keyTerms = words.filter(w => w.length > 4).slice(0, 5).join(' ');
+    if (keyTerms && keyTerms !== simplified) {
+      subQueries.push(keyTerms);
+    }
+    
+    // Variation 3: If mentions document type, create focused query
+    if (hasDocument) {
+      const docFocused = words.filter(w => 
+        !['what', 'are', 'the', 'how', 'when', 'where'].includes(w)
+      ).join(' ');
+      if (docFocused !== queryText.toLowerCase() && !subQueries.includes(docFocused)) {
+        subQueries.push(docFocused);
       }
     }
+    
+    console.log(`Generated ${subQueries.length} sub-queries:`);
+    subQueries.forEach((q, i) => console.log(`  ${i + 1}. "${q}"`));
 
-    if (!queryResponse.matches || queryResponse.matches.length === 0) {
-      console.log("No matches found - returning empty");
+    // STEP 2: Retrieve top-20 per sub-query
+    console.log("\n[2/6] Retrieving chunks for each sub-query...");
+    const allChunks = new Map(); // Use Map to deduplicate by chunk ID
+    
+    for (let i = 0; i < subQueries.length; i++) {
+      const subQuery = subQueries[i];
+      console.log(`  Query ${i + 1}/${subQueries.length}: "${subQuery.substring(0, 50)}..."`);
+      
+      const embedding = await getEmbedding(subQuery);
+      const response = await index.query({
+        vector: embedding,
+        topK: 20,
+        includeMetadata: true
+      });
+      
+      response.matches?.forEach((match, rank) => {
+        const chunkId = match.id;
+        if (!allChunks.has(chunkId)) {
+          allChunks.set(chunkId, {
+            id: chunkId,
+            docId: match.metadata?.docId,
+            text: match.metadata?.text || "",
+            title: match.metadata?.title || "",
+            authority: match.metadata?.authority || "",
+            year: match.metadata?.year || "",
+            docType: match.metadata?.docType || "",
+            pineconeScore: match.score,
+            pineconeRank: rank + 1, // Track rank for RRF
+            retrievedBy: [i] // Track which sub-query found it
+          });
+        } else {
+          // Chunk found by multiple queries - boost it
+          allChunks.get(chunkId).retrievedBy.push(i);
+        }
+      });
+    }
+    
+    const chunks = Array.from(allChunks.values()).filter(c => c.docId && c.text);
+    console.log(`✓ Retrieved ${chunks.length} unique chunks (after deduplication)`);
+    console.log(`  Chunks found by multiple queries: ${chunks.filter(c => c.retrievedBy.length > 1).length}`);
+
+    if (chunks.length === 0) {
+      console.log("✗ No chunks found");
       return res.json({ documents: [] });
     }
 
-    console.log("\nStep 4: Deduplicating...");
-    // Deduplicate - keep only best chunk per document
-    const bestChunkPerDoc = new Map();
-    for (const match of queryResponse.matches) {
-      const docId = match.metadata?.docId;
-      if (!docId) {
-        console.log("Skipping match with no docId");
-        continue;
-      }
+    // STEP 3: Enrich chunks with metadata hints
+    console.log("\n[3/6] Enriching chunks with metadata...");
+    const enrichedChunks = chunks.map(chunk => {
+      const metadata = `[Source: ${chunk.title} | Type: ${chunk.docType} | Authority: ${chunk.authority}]`;
+      return {
+        ...chunk,
+        enrichedText: `${metadata}\n\n${chunk.text}`,
+        originalText: chunk.text
+      };
+    });
+    
+    console.log(`✓ Enriched ${enrichedChunks.length} chunks with metadata`);
 
-      if (!bestChunkPerDoc.has(docId) || match.score > bestChunkPerDoc.get(docId).score) {
-        bestChunkPerDoc.set(docId, {
-          docId: docId,
-          text: match.metadata.text || "",
-          title: match.metadata.title || "",
-          authority: match.metadata.authority || "",
-          year: match.metadata.year || "",
-          docType: match.metadata.docType || "",
-          pineconeScore: match.score
-        });
-      }
-    }
+    // STEP 4: Rerank with Jina
+    console.log("\n[4/6] Reranking chunks with Jina...");
+    const t4 = Date.now();
+    
+    // Truncate enriched text for reranker (max 1000 chars)
+    const textsForRerank = enrichedChunks.map(c => 
+      c.enrichedText.length > 1000 
+        ? c.enrichedText.substring(0, 1000) + '...'
+        : c.enrichedText
+    );
+    
+    const reranked = await rerankDocs(queryText, textsForRerank);
+    console.log(`✓ Reranking completed in ${Date.now() - t4}ms`);
+    
+    // Attach rerank scores and ranks
+    enrichedChunks.forEach((chunk, idx) => {
+      chunk.rerankScore = reranked[idx]?.score || 0;
+    });
+    
+    // Sort by rerank score to get ranks
+    const sortedByRerank = [...enrichedChunks].sort((a, b) => b.rerankScore - a.rerankScore);
+    sortedByRerank.forEach((chunk, idx) => {
+      chunk.rerankRank = idx + 1;
+    });
+    
+    console.log("\nTop 5 after reranking:");
+    sortedByRerank.slice(0, 5).forEach((c, i) => {
+      console.log(`  ${i + 1}. [${c.rerankScore.toFixed(4)}] ${c.title}`);
+    });
 
-    const uniqueCandidates = Array.from(bestChunkPerDoc.values());
-    console.log("Unique documents:", uniqueCandidates.length);
-    console.log("Document titles:", uniqueCandidates.map(d => d.title));
-
-    // 2. RE-RANK WITH INTENT
-    console.log("\nStep 5: Re-ranking with Voyage AI...");
-    let rerankedResults = [];
+    // STEP 5: Apply source-mention multiplier
+    console.log("\n[5/6] Applying source-mention boost...");
     const queryLower = queryText.toLowerCase();
-    const isAcademicQuery = /apply|research|grant|faculty|scholarship/i.test(queryLower);
-
-    try {
-      // We pass more context to Voyage so it understands the "Intent"
-      console.log("Sending to Voyage for reranking:");
-      uniqueCandidates.forEach((d, i) => {
-        const preview = d.text.substring(0, 150).replace(/\n/g, ' ');
-        console.log(`  [${i}] ${d.title}: "${preview}..."`);
-      });
-
-      const rerankResponse = await voyage.rerank({
-        query: queryText,
-        documents: uniqueCandidates.map(d => `Title: ${d.title}\nContent: ${d.text}`),
-        topK: 15,
-        model: "rerank-2"
-      });
-
-      console.log("Rerank successful, got", rerankResponse.data.length, "results");
-
-      rerankedResults = rerankResponse.data.map(item => {
-        const original = uniqueCandidates[item.index];
-        // Voyage uses camelCase: relevanceScore, not relevance_score
-        let finalScore = item.relevanceScore || item.relevance_score || item.score || 0.5;
-
-        console.log(`  Voyage raw response for item:`, JSON.stringify(item).substring(0, 100));
-        console.log(`  Reranked: ${original.title.substring(0, 40)}... score: ${finalScore.toFixed(3)}`);
-
-        // INTENT GUARD: Penalize "Demand/Budget" docs if user is looking to "Apply"
-        if (isAcademicQuery && /demand|budget|estimate|fiscal/i.test(original.title.toLowerCase())) {
-          finalScore *= 0.2; // 80% penalty for fiscal mismatch
+    const mentionedDocs = [];
+    
+    // Detect if query mentions specific documents
+    enrichedChunks.forEach(chunk => {
+      const titleWords = chunk.title.toLowerCase().split(/\s+/);
+      const matchedWords = titleWords.filter(word => 
+        word.length > 3 && queryLower.includes(word)
+      );
+      
+      if (matchedWords.length >= 2) {
+        chunk.sourceBoost = 1.3; // 30% boost
+        if (!mentionedDocs.includes(chunk.title)) {
+          mentionedDocs.push(chunk.title);
         }
-
-        // Clean excerpt - remove injected metadata
-        let cleanExcerpt = original.text
-          .replace(/^Document:.*\n/m, '')
-          .replace(/^Authority:.*\n/m, '')
-          .replace(/^Type:.*\n/m, '')
-          .replace(/^Year:.*\n/m, '')
-          .trim();
-
-        return {
-          _id: original.docId,
-          title: original.title,
-          authority: original.authority,
-          year: original.year,
-          docType: original.docType,
-          excerpt: cleanExcerpt,
-          rawScore: finalScore
-        };
-      });
-    } catch (err) {
-      console.error("Rerank failed:", err.message);
-      console.log("Using Pinecone scores as fallback");
-
-      // Fallback uses original Pinecone scores with conservative scaling
-      rerankedResults = uniqueCandidates.slice(0, 15).map(d => {
-        // Pinecone dotproduct scores can be high, normalize more aggressively
-        let score = Math.max(0, d.pineconeScore || 0) / 4.0; // More conservative: divide by 4 instead of 2
-
-        if (isAcademicQuery && /demand|budget|estimate/i.test(d.title.toLowerCase())) {
-          score *= 0.1;
-        }
-        console.log(`  Fallback: ${d.title.substring(0, 40)}... score: ${score.toFixed(3)}`);
-
-        // Clean excerpt
-        let cleanExcerpt = d.text
-          .replace(/^Document:.*\n/m, '')
-          .replace(/^Authority:.*\n/m, '')
-          .replace(/^Type:.*\n/m, '')
-          .replace(/^Year:.*\n/m, '')
-          .trim();
-
-        return {
-          _id: d.docId,
-          title: d.title,
-          authority: d.authority,
-          year: d.year,
-          docType: d.docType,
-          excerpt: cleanExcerpt,
-          rawScore: score
-        };
-      });
+      } else {
+        chunk.sourceBoost = 1.0;
+      }
+    });
+    
+    if (mentionedDocs.length > 0) {
+      console.log(`✓ Boosting ${mentionedDocs.length} explicitly mentioned documents:`);
+      mentionedDocs.forEach(doc => console.log(`  - ${doc} (1.3x boost)`));
+    } else {
+      console.log(`  No specific documents mentioned in query`);
     }
 
-    console.log("\nTotal reranked results:", rerankedResults.length);
+    // STEP 6: RRF Fusion
+    console.log("\n[6/6] Applying RRF fusion...");
+    const k = 30; // RRF constant (lower = more emphasis on top ranks)
+    
+    enrichedChunks.forEach(chunk => {
+      // RRF formula: 1/(k + rank)
+      const pineconeRRF = 1 / (k + chunk.pineconeRank);
+      const rerankRRF = 1 / (k + chunk.rerankRank);
+      
+      // Multi-query bonus: chunks found by multiple queries get boost
+      const multiQueryBoost = 1 + (chunk.retrievedBy.length - 1) * 0.1; // +10% per extra query
+      
+      // Combined RRF score with source boost
+      chunk.rrfScore = (pineconeRRF + rerankRRF) * chunk.sourceBoost * multiQueryBoost;
+    });
+    
+    // Sort by final RRF score
+    enrichedChunks.sort((a, b) => b.rrfScore - a.rrfScore);
+    
+    console.log("\nTop 10 after RRF fusion:");
+    enrichedChunks.slice(0, 10).forEach((c, i) => {
+      const boost = c.sourceBoost > 1 ? ' [BOOSTED]' : '';
+      const multi = c.retrievedBy.length > 1 ? ` [${c.retrievedBy.length}x]` : '';
+      console.log(`  ${i + 1}. [${c.rrfScore.toFixed(4)}] ${c.title}${boost}${multi}`);
+    });
 
-    // Sort by the new adjusted scores
-    rerankedResults.sort((a, b) => b.rawScore - a.rawScore);
-
-    // 3. FETCH DB INFO
-    const docIds = rerankedResults.map(d => d._id);
-    const dbDocs = await Document.find({ _id: { $in: docIds } }).select("fileUrl fileName");
-    const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
-
-    // 4. CALCULATE DISPLAY SCORES with Query-Document Coverage Analysis
-    /* ─── NEW DYNAMIC SCORING LOGIC ─── */
-    console.log("\nStep 5: Calculating dynamic display scores...");
-
-    /* ─── STEP 5: TRUE DYNAMIC SCORING ─── */
-    let filtered = rerankedResults.map((doc, index) => {
-      const dbInfo = dbDocMap[doc._id];
+    // Group by document - keep BEST chunk per document
+    console.log("\n[7/6] Grouping by document...");
+    const docChunksMap = new Map();
+    
+    // First, group all chunks by document
+    enrichedChunks.forEach(chunk => {
+      if (!docChunksMap.has(chunk.docId)) {
+        docChunksMap.set(chunk.docId, []);
+      }
+      docChunksMap.get(chunk.docId).push(chunk);
+    });
+    
+    // Then, for each document, select the chunk with HIGHEST rerank score
+    let results = [];
+    docChunksMap.forEach((chunks, docId) => {
+      // Sort by rerank score (most important metric)
+      chunks.sort((a, b) => b.rerankScore - a.rerankScore);
+      const bestChunk = chunks[0];
+      
+      results.push({
+        _id: docId,
+        title: bestChunk.title,
+        authority: bestChunk.authority,
+        year: bestChunk.year,
+        docType: bestChunk.docType,
+        excerpt: bestChunk.originalText,
+        rrfScore: bestChunk.rrfScore,
+        rerankScore: bestChunk.rerankScore, // Use BEST chunk's rerank score
+        pineconeScore: bestChunk.pineconeScore,
+        sourceBoost: bestChunk.sourceBoost,
+        retrievedByCount: bestChunk.retrievedBy.length,
+        totalChunks: chunks.length // Track how many chunks this document has
+      });
+    });
+    
+    // CHUNK FREQUENCY BOOST: Smart boosting using RRF scores
+    console.log("\n[8/6] Applying smart chunk frequency boost...");
+    
+    // Get top 10 chunks by rerank score
+    const top10Chunks = [...enrichedChunks]
+      .sort((a, b) => b.rerankScore - a.rerankScore)
+      .slice(0, 10);
+    
+    // Count frequency and calculate average RRF per document
+    const docStats = {};
+    top10Chunks.forEach(chunk => {
+      if (!docStats[chunk.docId]) {
+        docStats[chunk.docId] = { frequency: 0, rrfScores: [] };
+      }
+      docStats[chunk.docId].frequency++;
+      docStats[chunk.docId].rrfScores.push(chunk.rrfScore);
+    });
+    
+    // Apply smart boost to documents
+    results.forEach(doc => {
+      const stats = docStats[doc._id];
+      if (!stats) return; // Document not in top 10
+      
+      const frequency = stats.frequency;
+      const avgRRF = stats.rrfScores.reduce((sum, s) => sum + s, 0) / stats.rrfScores.length;
+      const multiQueryCount = doc.retrievedByCount;
+      const baseScore = doc.rerankScore;
+      
+      // Only boost if: 3+ chunks, 2+ queries, and score is 30-60%
+      if (frequency >= 3 && multiQueryCount >= 2 && baseScore >= 0.3 && baseScore < 0.6) {
+        
+        // Smart boost formula: considers frequency, RRF agreement, and multi-query
+        let boost = (frequency * 0.02) + (avgRRF * 0.3) + (multiQueryCount * 0.01);
+        
+        // Reduce boost for scores already close to threshold
+        if (baseScore >= 0.5 && baseScore < 0.55) {
+          boost = boost * 0.65; // 65% of boost (35% reduction) for 50-55%
+        } else if (baseScore >= 0.55) {
+          boost = boost * 0.60; // 60% of boost (40% reduction) for 55-60%
+        }
+        // else: full boost for scores 30-50%
+        
+        const oldScore = doc.rerankScore;
+        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.75); // Cap at 75%
+        
+        console.log(`  ✓ Boosted "${doc.title.substring(0, 40)}..."`);
+        console.log(`    - ${frequency} chunks in top 10, avg RRF: ${avgRRF.toFixed(4)}, ${multiQueryCount} queries`);
+        console.log(`    - Score: ${(oldScore * 100).toFixed(1)}% → ${(doc.rerankScore * 100).toFixed(1)}% (+${(boost * 100).toFixed(1)}%)`);
+      } else if (frequency >= 3 && multiQueryCount >= 2) {
+        // Log why boost wasn't applied
+        if (baseScore < 0.3) {
+          console.log(`  ⊘ Skipped "${doc.title.substring(0, 40)}..." - base score too low (${(baseScore * 100).toFixed(1)}%)`);
+        } else if (baseScore >= 0.6) {
+          console.log(`  ⊘ Skipped "${doc.title.substring(0, 40)}..." - already confident (${(baseScore * 100).toFixed(1)}%)`);
+        }
+      }
+    });
+    
+    // Sort by rerank score (now includes frequency boost)
+    results.sort((a, b) => b.rerankScore - a.rerankScore);
+    
+    console.log(`\nFound ${results.length} unique documents`);
+    
+    // STRICT FILTERING: Only show highly relevant documents
+    const topDoc = results[0];
+    const topRerankScore = topDoc?.rerankScore || 0;
+    
+    // Minimum confidence threshold: 50%
+    // If top document is below 50%, show "No results found"
+    if (topRerankScore < 0.5) {
+      console.log(`⚠️ Top document confidence too low (${(topRerankScore * 100).toFixed(1)}% < 50%)`);
+      console.log(`Showing "No results found" instead of low-confidence results`);
+      return res.json({ 
+        documents: [],
+        message: "No sufficiently relevant documents found. Try rephrasing your query with more specific terms."
+      });
+    }
+    
+    // Strategy 1: If top doc is HIGH confidence (>= 0.6), only show docs >= 0.5
+    // Strategy 2: If top doc is GOOD confidence (0.5-0.6), only show docs >= 0.4
+    
+    let filtered = [];
+    
+    if (topRerankScore >= 0.6) {
+      // High confidence top result - only show other HIGH confidence docs
+      filtered = results.filter(doc => doc.rerankScore >= 0.5);
+      console.log(`Top doc is HIGH confidence (${topRerankScore.toFixed(3)}), filtering for >= 0.5`);
+    } else {
+      // Good confidence (0.5-0.6) - show docs >= 0.4
+      filtered = results.filter(doc => doc.rerankScore >= 0.4);
+      console.log(`Top doc is GOOD confidence (${topRerankScore.toFixed(3)}), filtering for >= 0.4`);
+    }
+    
+    if (filtered.length === 0) {
+      console.log(`⚠️ No documents meet relevance threshold`);
+      return res.json({ 
+        documents: [],
+        message: "No sufficiently relevant documents found. Try rephrasing your query."
+      });
+    }
+    
+    console.log(`Filtered to ${filtered.length} documents`);
+    
+    // Show top 5 documents max
+    results = filtered.slice(0, 5);
+    
+    // Calculate percentages based on ACTUAL rerank scores, not relative distribution
+    if (results.length === 1) {
+      // Single document: show its actual confidence (rerank score * 100)
+      const doc = results[0];
+      doc.scorePercent = doc.rerankScore * 100; // 0.766 -> 76.6%
+      doc.score = doc.rerankScore;
+      console.log(`Single result: showing actual confidence ${doc.scorePercent.toFixed(1)}%`);
+    } else {
+      // Multiple documents: normalize to sum to 100%
+      const totalScore = results.reduce((sum, d) => sum + d.rrfScore, 0);
+      results.forEach(doc => {
+        doc.score = doc.rrfScore / totalScore;
+        doc.scorePercent = (doc.rrfScore / totalScore) * 100;
+      });
+      
+      // Verify sum is 100%
+      const sumCheck = results.reduce((sum, d) => sum + d.scorePercent, 0);
+      console.log(`Score distribution check: ${sumCheck.toFixed(2)}% (should be 100%)`);
+    }
+    
+    // Fetch file URLs from MongoDB
+    const docIds = results.map(r => r._id);
+    const dbDocs = await Document.find({ _id: { $in: docIds } }).lean();
+    const dbMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
+    
+    results = results.map(doc => {
+      const dbInfo = dbMap[doc._id];
       doc.fileUrl = dbInfo?.fileUrl || null;
       doc.fileName = dbInfo?.fileName || null;
-
-      // Use Voyage's score - balanced mapping for all query types
-      const voyageScore = doc.rawScore;
-
-      // Voyage scores interpretation:
-      // 0.7+ = Excellent, 0.5-0.7 = Good, 0.3-0.5 = Moderate, <0.3 = Weak
-      let displayScore;
-
-      if (voyageScore >= 0.70) {
-        // Excellent: 85-100%
-        displayScore = 0.85 + ((voyageScore - 0.70) / 0.30) * 0.15;
-      } else if (voyageScore >= 0.50) {
-        // Good: 70-85%
-        displayScore = 0.70 + ((voyageScore - 0.50) / 0.20) * 0.15;
-      } else if (voyageScore >= 0.35) {
-        // Moderate: 55-70%
-        displayScore = 0.55 + ((voyageScore - 0.35) / 0.15) * 0.15;
-      } else if (voyageScore >= 0.20) {
-        // Weak: 40-55%
-        displayScore = 0.40 + ((voyageScore - 0.20) / 0.15) * 0.15;
-      } else {
-        // Very weak: <40%
-        displayScore = voyageScore * 2.0;
-      }
-
-      doc.score = Math.min(displayScore, 1.0);
-
-      console.log(`SCORE -> ${doc.title.substring(0, 30)}... | Voyage: ${voyageScore.toFixed(3)} | Display: ${(doc.score * 100).toFixed(1)}%`);
-
-      delete doc.rawScore;
+      
+      const boost = doc.sourceBoost > 1 ? ' [BOOSTED]' : '';
+      const confidence = doc.rerankScore >= 0.6 ? 'HIGH' : doc.rerankScore >= 0.4 ? 'GOOD' : 'MODERATE';
+      console.log(`  → ${doc.title.substring(0, 40)}... | ${doc.scorePercent.toFixed(1)}% | Rerank: ${doc.rerankScore.toFixed(3)} (${confidence})${boost}`);
       return doc;
     });
-
-    // Final pruning - only show documents with meaningful relevance (>60%)
-    filtered = filtered.filter(doc => doc.score >= 0.60).slice(0, 10);
-    console.log(`Final results: ${filtered.length} documents\n`);
-
-    // Handle language formatting
-    filtered.forEach(doc => {
-      const excerpt = doc.excerpt || "";
-      const nonAsciiRatio = (excerpt.match(/[^\x00-\x7F]/g) || []).length / (excerpt.length || 1);
-      if (nonAsciiRatio > 0.3) {
-        doc.excerpt = "[Document content in Marathi/Hindi. Click 'View Context' for English summary.]";
-      }
-    });
-
+    
+    console.log(`\n⏱ Total time: ${Date.now() - startTime}ms`);
+    
+    // Save to history
     await new QueryHistory({
-      queryText,
-      topDocumentTitle: filtered[0]?.title || "N/A",
-      results: filtered,
+      query: queryText,
+      results: results.map(d => d.title),
+      timestamp: new Date()
     }).save();
-
-    // Add debug info to first result
-    if (filtered.length > 0) {
-      filtered[0]._debug = {
-        message: "Score calculation working - CODE VERSION 2.0",
-        queryLength: queryText.split(/\s+/).length,
-        isShortQuery: queryText.split(/\s+/).length <= 5
-      };
-    }
-
-    res.json({ documents: filtered });
+    
+    res.json({ documents: results });
 
   } catch (error) {
     console.error("Search error:", error);
-    res.status(500).json({ message: "Internal Search Error", error: error.message });
+    res.status(500).json({ message: "Search failed", error: error.message });
   }
 });
-/* Officer Ask (RAG) */
-app.post("/api/officer/ask", async (req, res) => {
-  const { queryText, authority, year, docType } = req.body;
-  if (!queryText?.trim()) return res.status(400).json({ message: "queryText is required" });
 
+
+
+/* Query History */
+app.get("/api/officer/history", async (req, res) => {
   try {
-    const vector = await getEmbedding(queryText);
-    const index = getPineconeIndex();
-
-    const filter = {};
-    if (authority && authority !== "") filter.authority = { $eq: authority };
-    if (year && year !== "") filter.year = { $eq: String(year) };
-    if (docType && docType !== "") filter.docType = { $eq: docType };
-
-    const queryResponse = await index.query({
-      vector,
-      topK: 6,
-      includeMetadata: true,
-      ...(Object.keys(filter).length > 0 && { filter }),
-    });
-
-    const matches = queryResponse.matches || [];
-    if (!matches.length) {
-      return res.json({
-        answer: "No relevant policy documents were found. Please try rephrasing or adjusting your filters.",
-        sources: [],
-      });
-    }
-
-    const contextChunks = matches
-      .filter(m => m.metadata?.text)
-      .map((m, i) => `[Source ${i + 1}] ${m.metadata.title} (${m.metadata.authority}, ${m.metadata.year}):\n${m.metadata.text}`)
-      .join("\n\n---\n\n");
-
-    const prompt = `You are an expert assistant for the Department of Higher Education.
-The policy documents below may be written in English, Hindi, or Marathi.
-Read and understand all languages, then answer ONLY in clear English.
-Be specific, cite which source your answer comes from, and keep the answer concise.
-If the answer is not found in the documents, say so clearly.
-
-OFFICER'S QUESTION: ${queryText}
-
-POLICY DOCUMENT EXCERPTS:
-${contextChunks}
-
-ANSWER (in English):`;
-
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 1024,
-    });
-    const answer = completion.choices[0]?.message?.content || "No answer generated.";
-
-    const bestChunkPerDoc = new Map();
-    for (const m of matches) {
-      const docId = m.metadata?.docId;
-      if (!docId) continue;
-      if (!bestChunkPerDoc.has(docId) || m.score > bestChunkPerDoc.get(docId).score)
-        bestChunkPerDoc.set(docId, m);
-    }
-
-    const uniqueDocIds = Array.from(bestChunkPerDoc.keys());
-    const dbDocs = await Document.find({ _id: { $in: uniqueDocIds } }).lean();
-    const dbDocMap = Object.fromEntries(dbDocs.map(d => [d._id.toString(), d]));
-
-    const sources = uniqueDocIds.map(docId => {
-      const chunk = bestChunkPerDoc.get(docId);
-      const dbDoc = dbDocMap[docId];
-      if (!dbDoc) return null;
-      return {
-        _id: docId,
-        title: dbDoc.title,
-        authority: dbDoc.authority,
-        docType: dbDoc.docType,
-        year: dbDoc.year,
-        fileUrl: dbDoc.fileUrl,
-        fileName: dbDoc.fileName,
-        score: chunk.score,
-        excerpt: chunk.metadata?.text || "",
-        chunkIndex: chunk.metadata?.chunkIndex,
-      };
-    }).filter(Boolean).sort((a, b) => b.score - a.score);
-
-    res.json({ answer, sources });
+    const history = await QueryHistory.find()
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json(history);
   } catch (error) {
-    console.error("Ask error:", error);
-    res.status(500).json({ message: "Failed to retrieve policy info", error: error.message });
+    console.error("History fetch error:", error);
+    res.status(500).json({ message: "Failed to fetch history", error: error.message });
   }
 });
 
-/* Officer Summarize */
-app.post("/api/officer/summarize", async (req, res) => {
-  const { docId, excerptText } = req.body;
-
-  if (!docId) {
-    return res.status(400).json({ message: "docId is required" });
-  }
-
+/* Stats */
+app.get("/stats", async (req, res) => {
   try {
-    let chunkTexts = "";
-
-    // ✅ 1. Use excerpt directly if available
-    if (excerptText && excerptText.trim().length > 20 && !excerptText.startsWith("[")) {
-      chunkTexts = excerptText;
-    } else {
-      // ✅ 2. Fetch chunks from Pinecone
-      const index = getPineconeIndex();
-      let vectorIds = [];
-      let nextToken = undefined;
-
-      do {
-        const listed = await index.listPaginated({
-          prefix: `${docId}-chunk-`,
-          ...(nextToken && { paginationToken: nextToken }),
-        });
-
-        vectorIds.push(...(listed.vectors || []).map(v => v.id));
-        nextToken = listed.pagination?.next;
-
-      } while (nextToken);
-
-      if (!vectorIds.length) {
-        return res.json({ summary: "No content found." });
-      }
-
-      const allRecords = {};
-
-      for (let i = 0; i < vectorIds.length; i += 100) {
-        const batch = vectorIds.slice(i, i + 100);
-        const fetched = await index.fetch({ ids: batch });
-        Object.assign(allRecords, fetched.records ?? {});
-      }
-
-      chunkTexts = Object.values(allRecords)
-        .sort((a, b) => (a.metadata?.chunkIndex || 0) - (b.metadata?.chunkIndex || 0))
-        .map(r => r.metadata?.text || "")
-        .filter(t => t.trim().length > 0)
-        .slice(0, 10) // limit for performance
-        .join("\n\n");
-    }
-
-    // ✅ 3. Prompt
-    const prompt = `You are an expert policy analyst for the Department of Higher Education.
-Analyze the content below (English/Hindi/Marathi) and provide a structured summary in English.
-
-Include:
-- A 2-3 sentence overview
-- Key points in bullet format
-- Clear and simple language
-
-DOCUMENT CONTENT:
-${chunkTexts}
-
-SUMMARY (in English):`;
-
-    // ✅ 4. Groq call
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 1024,
-    });
-    const summaryText = completion.choices[0]?.message?.content || "No summary generated.";
-
-    if (!summaryText || summaryText.trim().length === 0) {
-      throw new Error("Empty response from Gemini");
-    }
-
-    // ✅ 5. Send response
-    res.json({ summary: summaryText });
-
+    const [total, policies, regulations, schemes, reports, totalQueries, activeUsers] = await Promise.all([
+      Document.countDocuments(),
+      Document.countDocuments({ docType: "Policy" }),
+      Document.countDocuments({ docType: "Regulation" }),
+      Document.countDocuments({ docType: "Scheme" }),
+      Document.countDocuments({ docType: "Report" }),
+      QueryHistory.countDocuments(),
+      Officer.countDocuments(),
+    ]);
+    res.json({ total, policies, regulations, schemes, reports, totalQueries, activeUsers });
   } catch (error) {
-    console.error("=== SUMMARIZE ERROR ===");
-    console.error("Message:", error.message);
-    console.error("Stack:", error.stack);
-
-    res.status(500).json({
-      message: "Summarization failed",
-      error: error.message,
-    });
+    res.status(500).json({ message: "Failed to fetch stats" });
   }
-});
-/* Test Models Route */
-app.get("/test-models", (req, res) => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
-  https.get(url, (response) => {
-    let data = "";
-    response.on("data", chunk => data += chunk);
-    response.on("end", () => {
-      try {
-        const parsed = JSON.parse(data);
-        const embeddingModels = parsed.models
-          .filter(m => m.supportedGenerationMethods?.includes("embedContent"))
-          .map(m => m.name);
-        res.json({ embeddingModels });
-      } catch {
-        res.status(500).json({ error: "Failed to parse models response" });
-      }
-    });
-  }).on("error", err => res.status(500).json({ error: err.message }));
-});
-
-/* Error Middleware */
-app.use((err, req, res, next) => {
-  console.error("Middleware error:", err);
-  if (err.code === "LIMIT_FILE_SIZE")
-    return res.status(400).json({ message: "File too large (max 10MB)" });
-  if (err.message === "Only PDF files are allowed")
-    return res.status(400).json({ message: err.message });
-  res.status(500).json({ message: "Internal server error", error: err.message });
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));

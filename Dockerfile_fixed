@@ -1,0 +1,17 @@
+# Dockerfile for Jina Embedding Service only
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy embedding service (it's in the root, not in server/routes/)
+COPY embedding_service.py .
+
+# Expose port 7860 (Hugging Face default)
+EXPOSE 7860
+
+# Run the service on port 7860
+CMD ["python", "embedding_service.py"]

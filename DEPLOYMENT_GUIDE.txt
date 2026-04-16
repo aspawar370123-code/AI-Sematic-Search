@@ -1,0 +1,203 @@
+========================================
+DEPLOYMENT GUIDE - 3 SEPARATE SERVICES
+========================================
+
+PART 1: DEPLOY JINA EMBEDDING SERVICE TO HUGGING FACE
+======================================================
+
+Step 1: Create Hugging Face Space
+----------------------------------
+1. Go to: https://huggingface.co/spaces
+2. Click "Create new Space"
+3. Settings:
+   - Space name: jina-embedding-service
+   - SDK: Docker
+   - Hardware: CPU Basic (FREE)
+   - Visibility: Public
+
+Step 2: Prepare Files for Hugging Face
+---------------------------------------
+Create a NEW folder called "huggingface-embedding" and copy these files:
+- Dockerfile.embedding (rename to just "Dockerfile")
+- requirements.txt
+- server/routes/embedding_service.py (copy to root as "embedding_service.py")
+
+Your folder structure should be:
+huggingface-embedding/
+├── Dockerfile
+├── requirements.txt
+└── embedding_service.py
+
+Step 3: Push to Hugging Face
+-----------------------------
+cd huggingface-embedding
+git init
+git remote add origin https://huggingface.co/spaces/YOUR_USERNAME/jina-embedding-service
+git add .
+git commit -m "Deploy Jina embedding service"
+git push origin main
+
+Step 4: Wait for Build
+----------------------
+- Takes 10-15 minutes first time
+- Check Logs tab for progress
+- Look for: "Running on http://0.0.0.0:7860"
+
+Step 5: Get Your Embedding Service URL
+---------------------------------------
+Your service will be at:
+https://YOUR_USERNAME-jina-embedding-service.hf.space
+
+Test it:
+https://YOUR_USERNAME-jina-embedding-service.hf.space/health
+
+SAVE THIS URL - you'll need it for backend deployment!
+
+
+PART 2: DEPLOY BACKEND TO RENDER
+=================================
+
+Step 1: Create Render Account
+------------------------------
+1. Go to: https://render.com
+2. Sign up with GitHub
+
+Step 2: Create New Web Service
+-------------------------------
+1. Click "New +" → "Web Service"
+2. Connect your GitHub repository
+3. Settings:
+   - Name: ai-doc-backend
+   - Region: Choose closest to you
+   - Branch: main
+   - Root Directory: server
+   - Runtime: Node
+   - Build Command: npm install
+   - Start Command: node server.js
+   - Instance Type: Free
+
+Step 3: Add Environment Variables
+----------------------------------
+In Render dashboard, add these:
+
+MONGODB_URI = your_mongodb_connection_string
+PINECONE_API_KEY = your_pinecone_api_key
+PINECONE_INDEX = your_pinecone_index_name
+GROQ_API_KEY = your_groq_api_key
+CLOUDINARY_CLOUD_NAME = your_cloudinary_cloud_name
+CLOUDINARY_API_KEY = your_cloudinary_api_key
+CLOUDINARY_API_SECRET = your_cloudinary_api_secret
+PORT = 10000
+EMBEDDING_SERVICE_URL = https://YOUR_USERNAME-jina-embedding-service.hf.space
+
+Step 4: Deploy
+--------------
+Click "Create Web Service"
+Wait 5-10 minutes for deployment
+
+Your backend URL:
+https://ai-doc-backend.onrender.com
+
+SAVE THIS URL - you'll need it for frontend!
+
+
+PART 3: DEPLOY FRONTEND TO RENDER
+==================================
+
+Step 1: Create Another Web Service
+-----------------------------------
+1. Click "New +" → "Web Service"
+2. Same GitHub repository
+3. Settings:
+   - Name: ai-doc-frontend
+   - Region: Same as backend
+   - Branch: main
+   - Root Directory: (leave empty)
+   - Runtime: Node
+   - Build Command: npm install && npm run build
+   - Start Command: npm run preview -- --host 0.0.0.0 --port $PORT
+   - Instance Type: Free
+
+Step 2: Add Environment Variable
+---------------------------------
+VITE_API_URL = https://ai-doc-backend.onrender.com
+
+Step 3: Deploy
+--------------
+Click "Create Web Service"
+Wait 5-10 minutes
+
+Your frontend URL:
+https://ai-doc-frontend.onrender.com
+
+
+PART 4: UPDATE BACKEND TO USE HUGGING FACE EMBEDDING SERVICE
+=============================================================
+
+In your code, update these files to use the Hugging Face URL:
+
+server/server.js - Line ~40:
+const EMBEDDING_SERVICE_URL = process.env.EMBEDDING_SERVICE_URL || 'http://127.0.0.1:5001';
+
+Then update axios calls:
+await axios.post(`${EMBEDDING_SERVICE_URL}/embed`, { texts })
+await axios.post(`${EMBEDDING_SERVICE_URL}/rerank`, { query, documents })
+
+server/config/embeddings.js - Line ~30:
+const EMBEDDING_SERVICE_URL = process.env.EMBEDDING_SERVICE_URL || 'http://127.0.0.1:5001';
+
+Update getEmbeddings function to use EMBEDDING_SERVICE_URL
+
+
+IMPORTANT NOTES:
+================
+
+1. FREE TIER LIMITATIONS:
+   - Render: Services sleep after 15 min inactivity (30-60s cold start)
+   - Hugging Face: Always on, but slower on CPU Basic
+   - First request after sleep will be slow
+
+2. CORS CONFIGURATION:
+   - Backend must allow frontend domain
+   - Embedding service must allow backend domain
+   - Already configured in your code
+
+3. TESTING:
+   - Test embedding service: https://YOUR-embedding-service.hf.space/health
+   - Test backend: https://YOUR-backend.onrender.com/health
+   - Test frontend: https://YOUR-frontend.onrender.com
+
+4. COSTS:
+   - Hugging Face CPU Basic: FREE
+   - Render Free Tier: FREE (with limitations)
+   - Total: $0/month
+
+5. PERFORMANCE:
+   - Embedding service: 5-10 seconds (CPU)
+   - Backend: Fast (sleeps after 15 min)
+   - Frontend: Fast (sleeps after 15 min)
+   - Total search time: 10-20 seconds (acceptable for free tier)
+
+
+TROUBLESHOOTING:
+================
+
+If embedding service fails:
+- Check Hugging Face Logs tab
+- Verify transformers==4.44.2 in requirements.txt
+- Wait for models to download (first run takes 15 min)
+
+If backend can't reach embedding service:
+- Check EMBEDDING_SERVICE_URL is correct
+- Test: curl https://YOUR-embedding-service.hf.space/health
+- Check CORS settings
+
+If frontend can't reach backend:
+- Check VITE_API_URL is correct
+- Verify backend is running
+- Check browser console for CORS errors
+
+If services keep sleeping:
+- This is normal on free tier
+- First request wakes them up (30-60s delay)
+- Consider upgrading to paid tier ($7/month) if needed

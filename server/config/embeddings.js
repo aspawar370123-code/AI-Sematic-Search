@@ -24,6 +24,20 @@ const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
 const getIndex = () => pinecone.index(process.env.PINECONE_INDEX);
 
+
+export const getEmbeddings = async (texts) => {
+  try {
+    const EMBEDDING_SERVICE_URL = process.env.EMBEDDING_SERVICE_URL || "http://127.0.0.1:5001";
+    const res = await axios.post(`${EMBEDDING_SERVICE_URL}/embed`, {
+      texts,
+    });
+
+    return res.data.embeddings;
+  } catch (error) {
+    console.error("Embedding error:", error.message);
+    throw error;
+  }
+};
 function cleanText(text) {
   return text
     .replace(/\s+/g, " ")
@@ -86,7 +100,7 @@ ${chunk}`;
     const batch = chunks.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
 
-    console.log(`\n[STEP 5] Generating 512-dim Voyage embeddings for batch ${batchNum}...`);
+    console.log(`\n[STEP 5] Generating BGE embeddings for batch ${batchNum}...`);
     const embeddings = await generateEmbeddingsBatch(batch);
 
     const records = embeddings.map((values, j) => {
@@ -116,8 +130,27 @@ ${chunk}`;
       };
     });
 
-    await getIndex().upsert({ records });
-    console.log(`[STEP 6] ✅ Batch ${batchNum} stored with Hybrid Vectors.`);
+    // Retry logic for Pinecone upsert
+    let retries = 3;
+    let lastError;
+    
+    while (retries > 0) {
+      try {
+        await getIndex().upsert({ records });
+        console.log(`[STEP 6] ✅ Batch ${batchNum} stored with Hybrid Vectors.`);
+        break; // Success, exit retry loop
+      } catch (error) {
+        lastError = error;
+        retries--;
+        if (retries > 0) {
+          console.log(`⚠️ Pinecone upsert failed, retrying... (${retries} attempts left)`);
+          await sleep(5000); // Wait 5 seconds before retry
+        } else {
+          console.error(`❌ Pinecone upsert failed after 3 attempts:`, error.message);
+          throw error; // Re-throw after all retries exhausted
+        }
+      }
+    }
 
     if (i + BATCH_SIZE < totalChunks) {
       await sleep(25000);
@@ -202,8 +235,8 @@ const extractTextFromPDF = async (fileUrl) => {
 const generateEmbeddingsBatch = async (texts, retries = 5) => {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const result = await voyage.embed({ input: texts, model: "voyage-3-lite" });
-      return result.data.map(d => d.embedding);
+      const embeddings = await getEmbeddings(texts);
+      return embeddings;
     } catch (err) {
       const status = err.statusCode ?? err.status ?? err.response?.status;
       if (status === 429 && attempt < retries) {
@@ -221,10 +254,12 @@ const generateEmbedding = async (text) => {
   return embedding;
 };
 
-/* QUERY DOCUMENTS */
+  /* QUERY DOCUMENTS - Updated for Local Jina Stack */
 const queryDocuments = async (question) => {
-  const questionEmbedding = await generateEmbedding(question);
+  // 1. Get embedding from Local Flask using the 'query' task
+  const questionEmbedding = await getEmbedding(question); 
 
+  // 2. Initial retrieval from Pinecone
   const results = await getIndex().query({
     vector: questionEmbedding,
     topK: 20,
@@ -233,22 +268,30 @@ const queryDocuments = async (question) => {
 
   if (!results.matches?.length) return { answer: "No relevant documents found.", sources: [] };
 
-  const rerank = await voyage.rerank({
-    query: question,
-    documents: results.matches.map(m => m.metadata.text),
-    topK: 5,
-    model: "rerank-2"
-  });
+  // 3. LOCAL RERANKING (Replaces Voyage)
+  // We send the query and the text from Pinecone matches to your Flask app
+  const documentsToRerank = results.matches.map(m => m.metadata.text);
+  
+  const rerankedResults = await rerankDocs(question, documentsToRerank);
 
-  const context = rerank.data
-    .map(item => `[${results.matches[item.index].metadata.title}]:\n${item.document}`)
+  // 4. Prepare Context for LLM (Gemini)
+  // We take the top 5 from the reranker
+  const topReranked = rerankedResults.slice(0, 5);
+
+  const context = topReranked
+    .map(item => {
+      // Find the original match to get the title
+      const originalMatch = results.matches[item.index];
+      return `[${originalMatch.metadata.title}]:\n${item.document}`;
+    })
     .join("\n\n");
 
-  const sources = rerank.data.map(item => ({
+  const sources = topReranked.map(item => ({
     title: results.matches[item.index].metadata.title,
-    score: item.relevance_score
+    score: item.score // This is the reliable Jina Reranker score (0-1)
   }));
 
+  // 5. Generate final answer with Gemini
   const completion = await ai.generateContent({
     contents: [{ role: "user", parts: [{ text: `Context:\n${context}\n\nQuestion: ${question}` }] }],
   });
