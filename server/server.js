@@ -628,7 +628,7 @@ app.post("/api/officer/search", async (req, res) => {
       docStats[chunk.docId].rrfScores.push(chunk.rrfScore);
     });
 
-    // Apply smart boost to documents
+    // Apply smart boost to documents - boost BOTH rrfScore and rerankScore
     results.forEach(doc => {
       const stats = docStats[doc._id];
       if (!stats) return; // Document not in top 10
@@ -652,12 +652,17 @@ app.post("/api/officer/search", async (req, res) => {
         }
         // else: full boost for scores 30-50%
 
-        const oldScore = doc.rerankScore;
-        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.90); // Cap at 90%
+        const oldRerankScore = doc.rerankScore;
+        const oldRrfScore = doc.rrfScore;
+
+        // Apply boost to BOTH scores
+        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.75); // Cap at 75%
+        doc.rrfScore = doc.rrfScore * (1 + boost); // Proportional boost to rrfScore
 
         console.log(`  ✓ Boosted "${doc.title.substring(0, 40)}..."`);
         console.log(`    - ${frequency} chunks in top 10, avg RRF: ${avgRRF.toFixed(4)}, ${multiQueryCount} queries`);
-        console.log(`    - Score: ${(oldScore * 100).toFixed(1)}% → ${(doc.rerankScore * 100).toFixed(1)}% (+${(boost * 100).toFixed(1)}%)`);
+        console.log(`    - Rerank: ${(oldRerankScore * 100).toFixed(1)}% → ${(doc.rerankScore * 100).toFixed(1)}%`);
+        console.log(`    - RRF: ${oldRrfScore.toFixed(4)} → ${doc.rrfScore.toFixed(4)} (+${(boost * 100).toFixed(1)}%)`);
       } else if (frequency >= 3 && multiQueryCount >= 2) {
         // Log why boost wasn't applied
         if (baseScore < 0.3) {
