@@ -330,19 +330,6 @@ app.delete("/documents/:id", async (req, res) => {
   }
 });
 
-/* Query History */
-app.get("/api/officer/history", async (req, res) => {
-  try {
-    const history = await QueryHistory.find()
-      .sort({ createdAt: -1 })
-      .limit(50);
-    res.json(history);
-  } catch (error) {
-    console.error("History fetch error:", error);
-    res.status(500).json({ message: "Failed to fetch history", error: error.message });
-  }
-});
-
 /* Stats */
 app.get("/stats", async (req, res) => {
   try {
@@ -666,7 +653,7 @@ app.post("/api/officer/search", async (req, res) => {
         // else: full boost for scores 30-50%
 
         const oldScore = doc.rerankScore;
-        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.75); // Cap at 75%
+        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.90); // Cap at 90%
 
         console.log(`  ✓ Boosted "${doc.title.substring(0, 40)}..."`);
         console.log(`    - ${frequency} chunks in top 10, avg RRF: ${avgRRF.toFixed(4)}, ${multiQueryCount} queries`);
@@ -816,8 +803,17 @@ app.get("/api/officer/history", async (req, res) => {
   try {
     const history = await QueryHistory.find()
       .sort({ createdAt: -1 })
-      .limit(50);
-    res.json(history);
+      .limit(50)
+      .lean(); // Convert to plain objects for modification
+
+    // Handle backward compatibility: map old 'query' field to 'queryText'
+    const mappedHistory = history.map(item => ({
+      ...item,
+      queryText: item.queryText || item.query || "Unknown Query",
+      topDocumentTitle: item.topDocumentTitle || (item.results && item.results[0]) || "Multiple Sources"
+    }));
+
+    res.json(mappedHistory);
   } catch (error) {
     console.error("History fetch error:", error);
     res.status(500).json({ message: "Failed to fetch history", error: error.message });
