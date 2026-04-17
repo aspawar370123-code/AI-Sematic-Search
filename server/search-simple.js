@@ -142,9 +142,9 @@ app.post("/api/officer/search", async (req, res) => {
 
     // Save to history
     await new QueryHistory({
-      query: queryText,
-      results: results.map(d => d.title),
-      timestamp: new Date()
+      queryText: queryText,
+      topDocumentTitle: results.length > 0 ? results[0].title : null,
+      results: results.map(d => d.title)
     }).save();
 
     res.json({ documents: results });
