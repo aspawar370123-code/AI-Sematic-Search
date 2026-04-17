@@ -638,17 +638,19 @@ app.post("/api/officer/search", async (req, res) => {
       const multiQueryCount = doc.retrievedByCount;
       const baseScore = doc.rerankScore;
 
-      // Only boost if: 3+ chunks, 2+ queries, and score is 30-60%
-      if (frequency >= 3 && multiQueryCount >= 2 && baseScore >= 0.3 && baseScore < 0.6) {
+      // Apply boost if: 3+ chunks and 2+ queries (removed upper score limit)
+      if (frequency >= 3 && multiQueryCount >= 2 && baseScore >= 0.3) {
 
         // Smart boost formula: considers frequency, RRF agreement, and multi-query
         let boost = (frequency * 0.03) + (multiQueryCount * 0.05) + (avgRRF * 0.1);
 
-        // Reduce boost for scores already close to threshold
-        if (baseScore >= 0.5 && baseScore < 0.55) {
-          boost = boost * 0.65; // 65% of boost (35% reduction) for 50-55%
+        // Reduce boost for scores already close to or above threshold
+        if (baseScore >= 0.6) {
+          boost = boost * 0.50; // 50% of boost for already confident scores (60%+)
         } else if (baseScore >= 0.55) {
-          boost = boost * 0.60; // 60% of boost (40% reduction) for 55-60%
+          boost = boost * 0.60; // 60% of boost for 55-60%
+        } else if (baseScore >= 0.5) {
+          boost = boost * 0.65; // 65% of boost for 50-55%
         }
         // else: full boost for scores 30-50%
 
@@ -656,7 +658,7 @@ app.post("/api/officer/search", async (req, res) => {
         const oldRrfScore = doc.rrfScore;
 
         // Apply boost to BOTH scores
-        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.75); // Cap at 75%
+        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.95); // Cap at 95%
         doc.rrfScore = doc.rrfScore * (1 + boost); // Proportional boost to rrfScore
 
         console.log(`  ✓ Boosted "${doc.title.substring(0, 40)}..."`);
@@ -667,8 +669,6 @@ app.post("/api/officer/search", async (req, res) => {
         // Log why boost wasn't applied
         if (baseScore < 0.3) {
           console.log(`  ⊘ Skipped "${doc.title.substring(0, 40)}..." - base score too low (${(baseScore * 100).toFixed(1)}%)`);
-        } else if (baseScore >= 0.6) {
-          console.log(`  ⊘ Skipped "${doc.title.substring(0, 40)}..." - already confident (${(baseScore * 100).toFixed(1)}%)`);
         }
       }
     });
