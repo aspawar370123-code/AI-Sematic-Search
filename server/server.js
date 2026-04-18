@@ -736,7 +736,18 @@ app.post("/api/officer/search", async (req, res) => {
     await new QueryHistory({
       queryText: queryText,
       topDocumentTitle: results.length > 0 ? results[0].title : null,
-      results: results.map(d => d.title)
+      results: results.map(d => ({
+        _id: d._id,
+        title: d.title,
+        authority: d.authority,
+        year: d.year,
+        docType: d.docType,
+        excerpt: d.excerpt,
+        scorePercent: d.scorePercent,
+        rerankScore: d.rerankScore,
+        fileUrl: d.fileUrl,
+        fileName: d.fileName
+      }))
     }).save();
 
     res.json({ documents: results });
