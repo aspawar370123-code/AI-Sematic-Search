@@ -32,29 +32,29 @@ const ManageDocuments = () => {
     }
   };
 
- const handleDelete = async (id) => {
-  if (!window.confirm("Are you sure you want to delete this document? This action cannot be undone.")) return;
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this document? This action cannot be undone.")) return;
 
-  try {
-    const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents/${id}`, { 
-      method: "DELETE" 
-    });
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents/${id}`, {
+        method: "DELETE"
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    if (res.ok) {
-      // Update state to remove the item from the UI immediately
-      setDocuments(prevDocs => prevDocs.filter(doc => doc._id !== id));
-      alert("Document deleted successfully");
-    } else {
-      // Show the specific error message from the backend
-      throw new Error(data.message || "Failed to delete document");
+      if (res.ok) {
+        // Update state to remove the item from the UI immediately
+        setDocuments(prevDocs => prevDocs.filter(doc => doc._id !== id));
+        alert("Document deleted successfully");
+      } else {
+        // Show the specific error message from the backend
+        throw new Error(data.message || "Failed to delete document");
+      }
+    } catch (err) {
+      console.error("Delete failed:", err);
+      alert("Delete failed: " + err.message);
     }
-  } catch (err) {
-    console.error("Delete failed:", err);
-    alert("Delete failed: " + err.message);
-  }
-};
+  };
   const startRename = (doc) => {
     setRenamingId(doc._id);
     setRenameValue(doc.title);
@@ -65,53 +65,53 @@ const ManageDocuments = () => {
     setRenameValue("");
   };
 
- const handleRename = async (id) => {
-  const trimmed = renameValue.trim();
-  if (!trimmed) return alert("Title cannot be empty");
+  const handleRename = async (id) => {
+    const trimmed = renameValue.trim();
+    if (!trimmed) return alert("Title cannot be empty");
 
-  setRenameLoading(true);
-  try {
-    const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents/${id}/rename`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: trimmed }),
-    });
+    setRenameLoading(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/documents/${id}/rename`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
 
-    // --- ADD THIS CHECK ---
-    if (!res.ok) {
-      // If server sends 404/500, catch it here before .json() fails
-      const errorData = await res.json().catch(() => ({ message: "Server error (HTML returned)" }));
-      throw new Error(errorData.message || `Error ${res.status}`);
+      // --- ADD THIS CHECK ---
+      if (!res.ok) {
+        // If server sends 404/500, catch it here before .json() fails
+        const errorData = await res.json().catch(() => ({ message: "Server error (HTML returned)" }));
+        throw new Error(errorData.message || `Error ${res.status}`);
+      }
+
+      const data = await res.json();
+      // -----------------------
+
+      setDocuments(documents.map(doc =>
+        doc._id === id ? { ...doc, title: trimmed } : doc
+      ));
+      setRenamingId(null);
+      setRenameValue("");
+    } catch (err) {
+      console.error("Rename failed:", err);
+      alert("Rename failed: " + err.message);
+    } finally {
+      setRenameLoading(false);
     }
-
-    const data = await res.json();
-    // -----------------------
-
-    setDocuments(documents.map(doc =>
-      doc._id === id ? { ...doc, title: trimmed } : doc
-    ));
-    setRenamingId(null);
-    setRenameValue("");
-  } catch (err) {
-    console.error("Rename failed:", err);
-    alert("Rename failed: " + err.message);
-  } finally {
-    setRenameLoading(false);
-  }
-};
+  };
   const filtered = documents
     .filter(doc => {
       // Search filter
       const matchesSearch = doc.title?.toLowerCase().includes(search.toLowerCase()) ||
         doc.authority?.toLowerCase().includes(search.toLowerCase()) ||
         doc.docType?.toLowerCase().includes(search.toLowerCase());
-      
+
       // Type filter
       const matchesType = !filterType || doc.docType === filterType;
-      
+
       // Authority filter
       const matchesAuthority = !filterAuthority || doc.authority === filterAuthority;
-      
+
       return matchesSearch && matchesType && matchesAuthority;
     })
     .sort((a, b) => {
@@ -192,8 +192,8 @@ const ManageDocuments = () => {
           <div style={styles.filtersRow}>
             <div style={styles.filterGroup}>
               <label style={styles.filterLabel}>Filter by Type:</label>
-              <select 
-                value={filterType} 
+              <select
+                value={filterType}
                 onChange={e => setFilterType(e.target.value)}
                 style={styles.filterSelect}
               >
@@ -207,8 +207,8 @@ const ManageDocuments = () => {
 
             <div style={styles.filterGroup}>
               <label style={styles.filterLabel}>Filter by Authority:</label>
-              <select 
-                value={filterAuthority} 
+              <select
+                value={filterAuthority}
                 onChange={e => setFilterAuthority(e.target.value)}
                 style={styles.filterSelect}
               >
@@ -220,7 +220,7 @@ const ManageDocuments = () => {
             </div>
 
             {(filterType || filterAuthority) && (
-              <button 
+              <button
                 style={styles.clearFiltersBtn}
                 onClick={() => {
                   setFilterType("");
@@ -300,10 +300,10 @@ const ManageDocuments = () => {
                           ...styles.badge,
                           backgroundColor:
                             doc.docType === "Policy" ? "#dbeafe" :
-                            doc.docType === "Regulation" ? "#fef3c7" : "#dcfce7",
+                              doc.docType === "Regulation" ? "#fef3c7" : "#dcfce7",
                           color:
                             doc.docType === "Policy" ? "#1d4ed8" :
-                            doc.docType === "Regulation" ? "#92400e" : "#166534",
+                              doc.docType === "Regulation" ? "#92400e" : "#166534",
                         }}>
                           {doc.docType}
                         </span>
