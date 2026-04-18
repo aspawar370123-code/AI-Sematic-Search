@@ -984,25 +984,28 @@ app.get("/stats", async (req, res) => {
 
 // Serve static files from React app
 const distPath = path.join(__dirname, '../dist');
+console.log('Serving static files from:', distPath);
 app.use(express.static(distPath));
 
 // Catch-all route: serve index.html for any route not handled by API
 // This MUST be the last route - it handles all non-API routes for React Router
-app.use((req, res, next) => {
-  // Only block actual API routes that don't exist
-  if (req.path.startsWith('/api/') ||
-    req.path.startsWith('/upload') ||
-    req.path.startsWith('/documents') ||
-    req.path.startsWith('/query') ||
-    req.path.startsWith('/stats') ||
-    req.path.startsWith('/health') ||
-    req.path.startsWith('/test-pinecone')) {
-    return res.status(404).json({ message: 'API endpoint not found' });
+app.get('*', (req, res) => {
+  const indexPath = path.join(distPath, 'index.html');
+  console.log('Catch-all route hit for:', req.path);
+  console.log('Attempting to serve:', indexPath);
+  
+  // Check if file exists
+  if (require('fs').existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    console.error('index.html not found at:', indexPath);
+    res.status(404).send(`
+      <h1>Application Not Built</h1>
+      <p>The React application has not been built yet.</p>
+      <p>Please run: <code>npm run build</code></p>
+      <p>Looking for: ${indexPath}</p>
+    `);
   }
-
-  // Serve index.html for all other routes (React Router will handle them)
-  // This includes /admin/*, /officer/*, and all other frontend routes
-  res.sendFile(path.join(distPath, 'index.html'));
 });
 
 const PORT = process.env.PORT || 5000;
