@@ -987,9 +987,9 @@ const distPath = path.join(__dirname, '../dist');
 console.log('Serving static files from:', distPath);
 app.use(express.static(distPath));
 
-// Catch-all route: serve index.html for any route not handled by API
+// Catch-all route: serve index.html for any GET route not handled by API
 // This MUST be the last route - it handles all non-API routes for React Router
-app.use((req, res) => {
+app.get('/*', (req, res) => {
   const indexPath = path.join(distPath, 'index.html');
   console.log('Catch-all route hit for:', req.path);
   console.log('Attempting to serve:', indexPath);
