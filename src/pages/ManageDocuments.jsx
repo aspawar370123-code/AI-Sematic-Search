@@ -215,7 +215,6 @@ const ManageDocuments = () => {
                 <option value="">All Authorities</option>
                 <option value="UGC">UGC</option>
                 <option value="AICTE">AICTE</option>
-                <option value="Ministry of Education">Ministry of Education</option>
                 <option value="MoE">MoE</option>
               </select>
             </div>
