@@ -55,7 +55,7 @@ export default function AdminDashboardPage() {
             <div style={styles.dashboardLayout}>
                 <nav style={styles.sidebar}>
                     <div style={styles.sidebarContent}>
-                        <div style={styles.adminTitle}>Admin Console</div>
+                        <div style={styles.adminTitle}>ADMIN CONSOLE</div>
 
                         <div style={styles.profileSection}>
                             <div style={styles.profileIcon}>👤</div>
@@ -67,26 +67,42 @@ export default function AdminDashboardPage() {
 
                         <div style={styles.divider}></div>
 
-                        {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item, index) => (
-                            <div
-                                key={item}
-                                style={{
-                                    ...styles.navItem,
-                                    ...(index === 0 ? styles.activeNavItem : {}),
-                                    ...(item === "Logout" ? styles.logoutItem : {})
-                                }}
-                                onClick={() => {
-                                    if (item === "Dashboard") navigate("/admin/dashboard");
-                                    if (item === "Logout") navigate("/");
-                                    if (item === "Upload Document") navigate("/admin/upload");
-                                    if (item === "Manage Documents") navigate("/admin/documents");
-                                    if (item === "Manage Admins") navigate("/admin/manage-admins");
-                                    if (item === "Manage Officers") navigate("/admin/manage-officers");
-                                }}
-                            >
-                                {item}
-                            </div>
-                        ))}
+                        <div
+                            style={{ ...styles.navItem, ...styles.activeNavItem }}
+                            onClick={() => navigate("/admin/dashboard")}
+                        >
+                            🏠 Dashboard
+                        </div>
+                        <div
+                            style={styles.navItem}
+                            onClick={() => navigate("/admin/upload")}
+                        >
+                            📤 Upload Document
+                        </div>
+                        <div
+                            style={styles.navItem}
+                            onClick={() => navigate("/admin/documents")}
+                        >
+                            📁 Manage Documents
+                        </div>
+                        <div
+                            style={styles.navItem}
+                            onClick={() => navigate("/admin/manage-admins")}
+                        >
+                            👥 Manage Admins
+                        </div>
+                        <div
+                            style={styles.navItem}
+                            onClick={() => navigate("/admin/manage-officers")}
+                        >
+                            👮 Manage Officers
+                        </div>
+                        <div
+                            style={styles.logoutItem}
+                            onClick={() => navigate("/")}
+                        >
+                            🚪 Logout
+                        </div>
                     </div>
                 </nav>
 
@@ -159,40 +175,37 @@ const styles = {
         width: "260px",
         backgroundColor: "#ffffff",
         borderRight: "1px solid #e2e8f0",
-        padding: "40px 20px",
+        padding: "24px 20px",
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
     },
     sidebarContent: {
         display: "flex",
         flexDirection: "column",
-        gap: "12px",
+        gap: "8px",
+        flex: 1,
     },
     adminTitle: {
-        fontSize: "13px",
-        color: "#475569",
+        fontSize: "11px",
+        color: "#94a3b8",
         fontWeight: "700",
         textTransform: "uppercase",
-        letterSpacing: "1.5px",
-        marginBottom: "20px",
-        padding: "0 10px",
+        letterSpacing: "1px",
+        marginBottom: "16px",
+        padding: "0",
     },
     profileSection: {
         display: "flex",
         alignItems: "center",
         gap: "12px",
-        padding: "16px",
+        padding: "12px",
         backgroundColor: "#f8fafc",
-        borderRadius: "10px",
-        marginBottom: "20px",
+        borderRadius: "8px",
+        marginBottom: "16px",
     },
     profileIcon: {
-        fontSize: "32px",
-        width: "48px",
-        height: "48px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "#e0e7ff",
-        borderRadius: "50%",
+        fontSize: "24px",
     },
     profileInfo: {
         display: "flex",
@@ -201,8 +214,8 @@ const styles = {
     },
     profileName: {
         fontSize: "14px",
-        fontWeight: "700",
-        color: "#1e293b",
+        fontWeight: "600",
+        color: "#0f172a",
     },
     profileEmail: {
         fontSize: "12px",
@@ -211,73 +224,82 @@ const styles = {
     divider: {
         height: "1px",
         backgroundColor: "#e2e8f0",
-        marginBottom: "20px",
+        marginBottom: "16px",
     },
     navItem: {
-        padding: "14px 18px",
-        borderRadius: "8px",
-        fontSize: "14px",
-        fontWeight: "600",
+        padding: "10px 14px",
+        borderRadius: "6px",
+        fontSize: "13px",
+        fontWeight: "500",
         color: "#475569",
         cursor: "pointer",
         transition: "all 0.2s ease",
         backgroundColor: "transparent",
+        marginBottom: "4px",
     },
     activeNavItem: {
         backgroundColor: "#003d6b",
         color: "#ffffff",
-        boxShadow: "0 4px 6px rgba(0, 61, 107, 0.2)",
+        fontWeight: "600",
     },
     logoutItem: {
         marginTop: "auto",
+        padding: "10px 14px",
+        borderRadius: "6px",
+        fontSize: "13px",
+        fontWeight: "500",
         color: "#dc2626",
+        cursor: "pointer",
+        transition: "all 0.2s ease",
+        backgroundColor: "transparent",
+        marginBottom: "0",
     },
     mainContent: {
         flex: 1,
-        padding: "60px",
+        padding: "32px 40px",
         overflowY: "auto",
     },
     contentHeader: {
-        marginBottom: "40px",
+        marginBottom: "24px",
     },
     welcomeTitle: {
-        fontSize: "30px",
-        fontWeight: "800",
+        fontSize: "24px",
+        fontWeight: "700",
         color: "#0f172a",
         margin: "0 0 8px 0",
     },
     welcomeSubtitle: {
-        fontSize: "16px",
+        fontSize: "14px",
         color: "#64748b",
         margin: 0,
     },
     statsGrid: {
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-        gap: "24px",
-        marginBottom: "40px",
+        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+        gap: "16px",
+        marginBottom: "24px",
     },
     statCard: {
         backgroundColor: "#ffffff",
-        padding: "32px",
-        borderRadius: "16px",
+        padding: "20px",
+        borderRadius: "12px",
         boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
         position: "relative",
         display: "flex",
         flexDirection: "column",
-        gap: "12px",
+        gap: "8px",
         transition: "transform 0.2s ease, box-shadow 0.2s ease",
     },
     statLabel: {
-        fontSize: "14px",
+        fontSize: "11px",
         fontWeight: "600",
         color: "#64748b",
         textTransform: "uppercase",
-        letterSpacing: "1px",
+        letterSpacing: "0.5px",
     },
     statValue: {
-        fontSize: "32px", // Reduced from 36px to 32px
-        fontWeight: "800",
+        fontSize: "28px",
+        fontWeight: "700",
         color: "#0f172a",
         lineHeight: "1.1",
     },

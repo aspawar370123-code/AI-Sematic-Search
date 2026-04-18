@@ -99,37 +99,36 @@ export default function ManageAdmins() {
         {/* Sidebar */}
         <aside style={styles.sidebar}>
           <div style={styles.brandSection}>
-            <div style={styles.adminTitle}>Admin Console</div>
+            <div style={styles.adminTitle}>ADMIN CONSOLE</div>
             <div style={styles.profileSection}>
               <div style={styles.profileIcon}>👤</div>
               <div style={styles.profileInfo}>
                 <div style={styles.profileName}>Administrator</div>
-                <div style={styles.profileEmail}>{adminEmail}</div>
+                <div style={styles.profileEmail}>{currentAdminEmail}</div>
               </div>
             </div>
           </div>
 
           <div style={styles.divider}></div>
 
-          {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item) => (
-            <div
-              key={item}
-              style={{
-                ...styles.navItem,
-                ...(item === "Manage Admins" ? styles.activeNavItem : {}),
-                ...(item === "Logout" ? styles.logoutItem : {})
-              }}
-              onClick={() => {
-                if (item === "Logout") navigate("/");
-                if (item === "Dashboard") navigate("/admin/dashboard");
-                if (item === "Upload Document") navigate("/admin/upload");
-                if (item === "Manage Documents") navigate("/admin/documents");
-                if (item === "Manage Officers") navigate("/admin/manage-officers");
-              }}
-            >
-              {item}
-            </div>
-          ))}
+          <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
+            🏠 Dashboard
+          </div>
+          <div style={styles.navItem} onClick={() => navigate("/admin/upload")}>
+            📤 Upload Document
+          </div>
+          <div style={styles.navItem} onClick={() => navigate("/admin/documents")}>
+            📁 Manage Documents
+          </div>
+          <div style={{...styles.navItem, ...styles.activeNavItem}} onClick={() => navigate("/admin/manage-admins")}>
+            👥 Manage Admins
+          </div>
+          <div style={styles.navItem} onClick={() => navigate("/admin/manage-officers")}>
+            👮 Manage Officers
+          </div>
+          <div style={styles.logoutItem} onClick={() => navigate("/")}>
+            🚪 Logout
+          </div>
         </aside>
 
         {/* Main Content */}
@@ -276,9 +275,9 @@ const styles = {
   divider: { height: "1px", backgroundColor: "#e2e8f0", marginBottom: "20px" },
   navItem: { padding: "14px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", color: "#475569", cursor: "pointer", marginBottom: "6px", transition: "all 0.2s" },
   activeNavItem: { backgroundColor: "#003d6b", color: "#ffffff", boxShadow: "0 4px 6px rgba(0,61,107,0.2)" },
-  logoutItem: { color: "#dc2626", marginTop: "auto" },
+  logoutItem: { color: "#dc2626", marginTop: "auto", padding: "14px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: "pointer", transition: "all 0.2s" },
   mainContent: { flex: 1, padding: "40px", overflowY: "auto" },
-  contentHeader: { marginBottom: "32px" },
+  contentHeader: { marginBottom: "32px", display: "flex", justifyContent: "space-between", alignItems: "center" },
   title: { fontSize: "28px", fontWeight: "800", color: "#1e293b", margin: 0 },
   subtitle: { fontSize: "14px", color: "#64748b", marginTop: "4px" },
   createBtn: { backgroundColor: "#003d6b", color: "#ffffff", border: "none", padding: "12px 24px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: "pointer" },

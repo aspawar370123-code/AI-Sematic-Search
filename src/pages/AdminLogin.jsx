@@ -66,12 +66,12 @@ export default function AdminAuthPage() {
                 <div style={styles.formContainer}>
                     <h2 style={styles.formTitle}>Administrator Sign In</h2>
                     <p style={styles.formSubTitle}>
-                        Enter your official details to continue
+                        Enter your official admin details to continue
                     </p>
 
                     <form style={styles.loginForm} onSubmit={handleSubmit}>
                         <div style={styles.inputGroup}>
-                            <label style={styles.label}>Official Email</label>
+                            <label style={styles.label}>Admin Email</label>
                             <input
                                 type="email"
                                 placeholder="admin@example.com"

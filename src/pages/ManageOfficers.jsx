@@ -95,7 +95,7 @@ export default function ManageOfficers() {
                 {/* Sidebar */}
                 <div style={styles.sidebar}>
                     <div style={styles.brandSection}>
-                        <div style={styles.adminTitle}>Admin Console</div>
+                        <div style={styles.adminTitle}>ADMIN CONSOLE</div>
                         <div style={styles.profileSection}>
                             <div style={styles.profileIcon}>👤</div>
                             <div style={styles.profileInfo}>
@@ -109,27 +109,27 @@ export default function ManageOfficers() {
 
                     <nav style={styles.nav}>
                         <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
-                            Dashboard
+                            🏠 Dashboard
                         </div>
                         <div style={styles.navItem} onClick={() => navigate("/admin/upload")}>
-                            Upload Document
+                            📤 Upload Document
                         </div>
                         <div style={styles.navItem} onClick={() => navigate("/admin/documents")}>
-                            Manage Documents
+                            📁 Manage Documents
                         </div>
                         <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
-                            Manage Admins
+                            👥 Manage Admins
                         </div>
                         <div style={{...styles.navItem, ...styles.navItemActive}}>
-                            Manage Officers
+                            👮 Manage Officers
                             {pendingCount > 0 && (
                                 <span style={styles.badge}>{pendingCount}</span>
                             )}
                         </div>
                     </nav>
 
-                    <div style={styles.logoutBtn} onClick={() => navigate("/admin/login")}>
-                        Logout
+                    <div style={styles.logoutBtn} onClick={() => navigate("/")}>
+                        🚪 Logout
                     </div>
                 </div>
 

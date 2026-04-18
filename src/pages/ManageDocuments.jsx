@@ -140,7 +140,7 @@ const ManageDocuments = () => {
         {/* Sidebar */}
         <nav style={styles.sidebar}>
           <div style={styles.sidebarContent}>
-            <div style={styles.adminTitle}>Admin Console</div>
+            <div style={styles.adminTitle}>ADMIN CONSOLE</div>
 
             <div style={styles.profileSection}>
               <div style={styles.profileIcon}>👤</div>
@@ -152,25 +152,24 @@ const ManageDocuments = () => {
 
             <div style={styles.divider}></div>
 
-            {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item) => (
-              <div
-                key={item}
-                style={{
-                  ...styles.navItem,
-                  ...(item === "Manage Documents" ? styles.activeNavItem : {}),
-                  ...(item === "Logout" ? styles.logoutItem : {})
-                }}
-                onClick={() => {
-                  if (item === "Logout") navigate("/");
-                  if (item === "Dashboard") navigate("/admin/dashboard");
-                  if (item === "Upload Document") navigate("/admin/upload");
-                  if (item === "Manage Admins") navigate("/admin/manage-admins");
-                  if (item === "Manage Officers") navigate("/admin/manage-officers");
-                }}
-              >
-                {item}
-              </div>
-            ))}
+            <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
+              🏠 Dashboard
+            </div>
+            <div style={styles.navItem} onClick={() => navigate("/admin/upload")}>
+              📤 Upload Document
+            </div>
+            <div style={{...styles.navItem, ...styles.activeNavItem}} onClick={() => navigate("/admin/documents")}>
+              📁 Manage Documents
+            </div>
+            <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
+              👥 Manage Admins
+            </div>
+            <div style={styles.navItem} onClick={() => navigate("/admin/manage-officers")}>
+              👮 Manage Officers
+            </div>
+            <div style={styles.logoutItem} onClick={() => navigate("/")}>
+              🚪 Logout
+            </div>
           </div>
         </nav>
 
