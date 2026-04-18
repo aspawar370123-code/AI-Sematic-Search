@@ -975,7 +975,7 @@ app.use(express.static(distPath));
 
 // Catch-all route: serve index.html for any route not handled by API
 // This MUST be the last route - it handles all non-API routes for React Router
-app.get('*', (req, res) => {
+app.get('/*', (req, res) => {
   // Don't serve index.html for API routes
   if (req.path.startsWith('/api') ||
     req.path.startsWith('/admin') ||

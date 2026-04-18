@@ -260,7 +260,7 @@ const styles = {
   subtitle: { fontSize: "14px", color: "#64748b", marginTop: "4px" },
   createBtn: { backgroundColor: "#003d6b", color: "#ffffff", border: "none", padding: "12px 24px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: "pointer" },
   loading: { textAlign: "center", padding: "40px", color: "#64748b" },
-  tableContainer: { backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid: "#e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", overflow: "hidden" },
+  tableContainer: { backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", overflow: "hidden" },
   table: { width: "100%", borderCollapse: "collapse" },
   tableHeader: { backgroundColor: "#f8fafc", borderBottom: "2px solid #e2e8f0" },
   th: { padding: "16px", textAlign: "left", fontSize: "12px", fontWeight: "700", color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px" },
