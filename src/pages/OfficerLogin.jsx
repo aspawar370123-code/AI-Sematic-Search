@@ -13,6 +13,11 @@ export default function OfficerAuthPage() {
         return () => { document.body.style.overflow = "auto"; };
     }, []);
 
+    // Clear form when switching between login and register
+    useEffect(() => {
+        setFormData({ email: "", password: "", name: "", designation: "" });
+    }, [isLogin]);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         const endpoint = isLogin ? "/officer/login" : "/officer/register";
@@ -27,8 +32,15 @@ export default function OfficerAuthPage() {
             const data = await response.json();
 
             if (response.ok) {
-                alert(isLogin ? "Authentication Successful" : "Registration Request Submitted");
-                if (isLogin) navigate("/officer/dashboard");
+                if (isLogin) {
+                    alert("Authentication Successful");
+                    navigate("/officer/dashboard");
+                } else {
+                    alert("Registration request submitted successfully! You will receive access once approved by the administrator.");
+                    // Clear form and switch to login
+                    setFormData({ email: "", password: "", name: "", designation: "" });
+                    setIsLogin(true);
+                }
             } else {
                 alert(data.message || "An error occurred");
             }

@@ -64,31 +64,17 @@ export default function AdminAuthPage() {
             {/* Right Panel: Auth Form */}
             <div style={styles.rightPanel}>
                 <div style={styles.formContainer}>
-                    <h2 style={styles.formTitle}>{isLogin ? "Sign In" : "Create Admin Account"}</h2>
+                    <h2 style={styles.formTitle}>Administrator Sign In</h2>
                     <p style={styles.formSubTitle}>
-                        {isLogin ? "Enter your official details to continue" : "Register a new administrative profile"}
+                        Enter your official details to continue
                     </p>
 
                     <form style={styles.loginForm} onSubmit={handleSubmit}>
-                        {!isLogin && (
-                            <div style={styles.inputGroup}>
-                                <label style={styles.label}>Full Name</label>
-                                <input
-                                    type="text"
-                                    placeholder="Enter your name"
-                                    style={styles.input}
-                                    value={formData.name}
-                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                    required
-                                />
-                            </div>
-                        )}
-
                         <div style={styles.inputGroup}>
                             <label style={styles.label}>Official Email</label>
                             <input
                                 type="email"
-                                placeholder="name@nic.in"
+                                placeholder="admin@example.com"
                                 style={styles.input}
                                 value={formData.email}
                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -100,31 +86,18 @@ export default function AdminAuthPage() {
                             <label style={styles.label}>Password</label>
                             <input
                                 type="password"
-                                placeholder="••••••••"
+                                placeholder="Enter your password"
                                 style={styles.input}
                                 value={formData.password}
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                 required
                             />
-                            {isLogin && (
-                                <span style={styles.forgotPassword}>Forgot Password?</span>
-                            )}
                         </div>
 
                         <button type="submit" style={styles.submitButton}>
-                            {isLogin ? "Authorize & Login" : "Register Profile"}
+                            Authorize & Login
                         </button>
                     </form>
-
-                    <div style={styles.toggleText}>
-                        {isLogin ? "New administrator?" : "Already have an account?"}{" "}
-                        <span
-                            style={styles.toggleLink}
-                            onClick={() => setIsLogin(!isLogin)}
-                        >
-                            {isLogin ? "Create an account" : "Sign in here"}
-                        </span>
-                    </div>
 
                     <div style={styles.backHome} onClick={() => navigate("/")}>
                         ← Back to main website
@@ -247,14 +220,6 @@ const styles = {
         outline: "none",
         transition: "border-color 0.2s, background-color 0.2s",
     },
-    forgotPassword: {
-        fontSize: "12px",
-        color: "#3b82f6",
-        textAlign: "right",
-        marginTop: "6px",
-        cursor: "pointer",
-        fontWeight: "500",
-    },
     submitButton: {
         marginTop: "8px",
         padding: "16px",
@@ -266,17 +231,6 @@ const styles = {
         fontWeight: "600",
         cursor: "pointer",
         transition: "background 0.2s",
-    },
-    toggleText: {
-        marginTop: "25px",
-        fontSize: "14px",
-        color: "#64748b",
-        textAlign: "center",
-    },
-    toggleLink: {
-        color: "#3b82f6",
-        fontWeight: "600",
-        cursor: "pointer",
     },
     backHome: {
         marginTop: "40px",
