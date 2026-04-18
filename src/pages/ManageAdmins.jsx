@@ -139,10 +139,10 @@ export default function ManageAdmins() {
               <h1 style={styles.title}>Manage Administrators</h1>
               <p style={styles.subtitle}>View and manage admin accounts</p>
             </div>
-          <button style={styles.createBtn} onClick={() => setShowCreateModal(true)}>
-            + Create New Admin
-          </button>
-        </div>
+            <button style={styles.createBtn} onClick={() => setShowCreateModal(true)}>
+              + Create New Admin
+            </button>
+          </div>
 
         {loading ? (
           <div style={styles.loading}>Loading admins...</div>
@@ -184,7 +184,6 @@ export default function ManageAdmins() {
             </table>
           </div>
         )}
-      </main>
 
       {/* Create Admin Modal */}
       {showCreateModal && (
