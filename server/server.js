@@ -989,10 +989,8 @@ app.use(express.static(distPath));
 // Catch-all route: serve index.html for any route not handled by API
 // This MUST be the last route - it handles all non-API routes for React Router
 app.use((req, res, next) => {
-  // Don't serve index.html for API routes
-  if (req.path.startsWith('/api') ||
-    req.path.startsWith('/admin') ||
-    req.path.startsWith('/officer') ||
+  // Only block actual API routes that don't exist
+  if (req.path.startsWith('/api/') ||
     req.path.startsWith('/upload') ||
     req.path.startsWith('/documents') ||
     req.path.startsWith('/query') ||
@@ -1003,6 +1001,7 @@ app.use((req, res, next) => {
   }
 
   // Serve index.html for all other routes (React Router will handle them)
+  // This includes /admin/*, /officer/*, and all other frontend routes
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
