@@ -566,23 +566,23 @@ app.post("/api/officer/search", async (req, res) => {
 
     enrichedChunks.forEach(chunk => {
       const titleClean = clean(chunk.title);
-      
+
       // Method 1: Exact substring match (either direction)
       const exactMatch = queryClean.includes(titleClean) || titleClean.includes(queryClean);
-      
+
       // Method 2: Word-level matching (2+ significant words)
       const titleWords = titleClean.split(" ").filter(w => w.length > 3);
       const queryWords = queryClean.split(" ");
       const matchedWords = titleWords.filter(word => queryWords.includes(word));
       const wordMatch = matchedWords.length >= 2;
-      
+
       // Method 3: Fuzzy similarity (Jaccard)
       const similarity = jaccardSimilarity(queryClean, titleClean);
       const fuzzyMatch = similarity > 0.6; // 60% word overlap
-      
+
       // Title match if any method succeeds
       const titleMatch = exactMatch || wordMatch || fuzzyMatch;
-      
+
       if (titleMatch) {
         chunk.titleMatch = true;
         chunk.titleMatchMethod = exactMatch ? 'EXACT' : wordMatch ? 'WORD' : 'FUZZY';
@@ -605,69 +605,47 @@ app.post("/api/officer/search", async (req, res) => {
       });
     }
 
-    // 7b. Frequency boost - count chunks per document in top 30
-    const top30Reranked = enrichedChunks.slice(0, 30);
-    const docFrequency = {};
-    top30Reranked.forEach(chunk => {
-      docFrequency[chunk.docId] = (docFrequency[chunk.docId] || 0) + 1;
-    });
-
-    // Apply additive boosts (small, controlled increases)
+    // 7b. Apply dynamic additive boost
+    console.log("\n[7b] Applying dynamic boost...");
+    
     enrichedChunks.forEach(chunk => {
-      const frequency = docFrequency[chunk.docId] || 0;
-      const multiQueryCount = chunk.retrievedBy.length;
+      let dynamicBoost = 0;
 
-      // Start with rerank score
-      let finalScore = chunk.rerankScore;
-
-      // Small additive boosts
+      // Title-based dynamic boost (scaled by similarity)
       if (chunk.titleMatch) {
-        finalScore += 0.07; // +7% for title match
-        chunk.titleBoostAmount = 0.07;
+        dynamicBoost += 0.15 * chunk.titleMatchScore;
+        chunk.titleBoostAmount = 0.15 * chunk.titleMatchScore;
       } else {
         chunk.titleBoostAmount = 0;
       }
 
-      if (multiQueryCount >= 2) {
-        finalScore += 0.03; // +3% for multi-query consensus
+      // Multi-query signal
+      if (chunk.retrievedBy.length >= 2) {
+        dynamicBoost += 0.03;
         chunk.multiQueryBoostAmount = 0.03;
       } else {
         chunk.multiQueryBoostAmount = 0;
       }
 
-      // Frequency-based additive boost (tiered)
-      let freqBoostAmount = 0;
-      if (multiQueryCount >= 2) {
-        if (frequency >= 10) {
-          freqBoostAmount = 0.12; // +12% for very high frequency
-        } else if (frequency >= 7) {
-          freqBoostAmount = 0.09; // +9% for high frequency
-        } else if (frequency >= 4) {
-          freqBoostAmount = 0.06; // +6% for medium-high frequency
-        } else if (frequency >= 3) {
-          freqBoostAmount = 0.03; // +3% for medium frequency
-        }
-      }
-      finalScore += freqBoostAmount;
-      chunk.frequencyBoostAmount = freqBoostAmount;
+      // Cap boost at 20%
+      dynamicBoost = Math.min(dynamicBoost, 0.2);
+      chunk.totalBoostAmount = dynamicBoost;
 
-      // Clamp to maximum of 1.0 (100%)
-      chunk.finalScore = Math.min(finalScore, 1.0);
-
-      // Track total boost applied
-      chunk.totalBoostAmount = chunk.titleBoostAmount + chunk.multiQueryBoostAmount + chunk.frequencyBoostAmount;
+      // Final score
+      chunk.finalScore = Math.min(chunk.rerankScore + dynamicBoost, 1.0);
     });
 
     // Re-sort by final boosted score
     enrichedChunks.sort((a, b) => b.finalScore - a.finalScore);
 
-    console.log("\nTop 10 after smart boosting:");
+    console.log("\nTop 10 after dynamic boosting:");
     enrichedChunks.slice(0, 10).forEach((c, i) => {
       const boosts = [];
-      if (c.titleBoostAmount > 0) boosts.push(`TITLE:+${(c.titleBoostAmount * 100).toFixed(0)}%`);
+      if (c.titleBoostAmount > 0) boosts.push(`TITLE:+${(c.titleBoostAmount * 100).toFixed(1)}%`);
       if (c.multiQueryBoostAmount > 0) boosts.push(`MULTI:+${(c.multiQueryBoostAmount * 100).toFixed(0)}%`);
-      if (c.frequencyBoostAmount > 0) boosts.push(`FREQ:+${(c.frequencyBoostAmount * 100).toFixed(0)}%`);
       const boostStr = boosts.length > 0 ? ` [${boosts.join(' ')}]` : '';
+      const totalBoost = c.totalBoostAmount > 0 ? ` (total: +${(c.totalBoostAmount * 100).toFixed(1)}%)` : '';
+
       const capped = c.finalScore >= 1.0 ? ' [CAPPED]' : '';
       console.log(`  ${i + 1}. [${c.finalScore.toFixed(4)}] ${c.title}${boostStr}${capped}`);
     });
@@ -705,7 +683,6 @@ app.post("/api/officer/search", async (req, res) => {
         titleMatchScore: bestChunk.titleMatchScore,
         titleBoostAmount: bestChunk.titleBoostAmount,
         multiQueryBoostAmount: bestChunk.multiQueryBoostAmount,
-        frequencyBoostAmount: bestChunk.frequencyBoostAmount,
         totalBoostAmount: bestChunk.totalBoostAmount,
         retrievedByCount: bestChunk.retrievedBy.length,
         totalChunks: chunks.length
@@ -729,7 +706,6 @@ app.post("/api/officer/search", async (req, res) => {
     }
 
     console.log(`Filtered to ${filtered.length} documents (60%+ threshold)`);
-
     // Show top 5 documents max
     results = filtered.slice(0, 5);
 
@@ -766,9 +742,10 @@ app.post("/api/officer/search", async (req, res) => {
       const boosts = [];
       if (doc.titleBoostAmount > 0) boosts.push(`TITLE:+${(doc.titleBoostAmount * 100).toFixed(0)}%`);
       if (doc.multiQueryBoostAmount > 0) boosts.push(`MULTI:+${(doc.multiQueryBoostAmount * 100).toFixed(0)}%`);
-      if (doc.frequencyBoostAmount > 0) boosts.push(`FREQ:+${(doc.frequencyBoostAmount * 100).toFixed(0)}%`);
+      if (doc.titleBoostAmount > 0) boosts.push(`TITLE:+${(doc.titleBoostAmount * 100).toFixed(1)}%`);
+      if (doc.multiQueryBoostAmount > 0) boosts.push(`MULTI:+${(doc.multiQueryBoostAmount * 100).toFixed(0)}%`);
       const boostStr = boosts.length > 0 ? ` [${boosts.join(' ')}]` : '';
-      const totalBoost = doc.totalBoostAmount > 0 ? ` (+${(doc.totalBoostAmount * 100).toFixed(0)}% total)` : '';
+      const totalBoost = doc.totalBoostAmount > 0 ? ` (total: +${(doc.totalBoostAmount * 100).toFixed(1)}%)` : '';
 
       const confidence = doc.rerankScore >= 0.7 ? 'VERY HIGH' : doc.rerankScore >= 0.6 ? 'HIGH' : 'GOOD';
       console.log(`  → ${doc.title.substring(0, 40)}... | ${doc.scorePercent.toFixed(1)}% | Rerank: ${doc.rerankScore.toFixed(3)} → Final: ${doc.finalScore.toFixed(3)} (${confidence})${boostStr}${totalBoost}`);
