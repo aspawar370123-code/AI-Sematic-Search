@@ -486,7 +486,7 @@ const generateSparseVector = (text) => {
 };
 
 app.post("/api/officer/search", async (req, res) => {
-  const { queryText } = req.body;
+  const { queryText, officerEmail } = req.body;
   const startTime = Date.now();
 
   if (!queryText?.trim()) {
@@ -794,7 +794,8 @@ app.post("/api/officer/search", async (req, res) => {
       await new QueryHistory({
         queryText: queryText,
         topDocumentTitle: null,
-        results: []
+        results: [],
+        officerEmail: officerEmail || "unknown"
       }).save();
 
       return res.json({
@@ -850,6 +851,7 @@ app.post("/api/officer/search", async (req, res) => {
     await new QueryHistory({
       queryText: queryText,
       topDocumentTitle: results.length > 0 ? results[0].title : null,
+      officerEmail: officerEmail || "unknown",
       results: results.map(d => ({
         _id: d._id,
         title: d.title,
@@ -932,7 +934,13 @@ Guidelines:
 /* Query History */
 app.get("/api/officer/history", async (req, res) => {
   try {
-    const history = await QueryHistory.find()
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({ message: "Officer email is required" });
+    }
+    
+    const history = await QueryHistory.find({ officerEmail: email })
       .sort({ createdAt: -1 })
       .limit(50)
       .lean(); // Convert to plain objects for modification

@@ -10,7 +10,16 @@ export default function QueryHistory() {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/officer/history`);
+        const officerEmail = localStorage.getItem("officerEmail");
+        if (!officerEmail) {
+          console.error("No officer email found");
+          setLoading(false);
+          return;
+        }
+        
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/officer/history?email=${encodeURIComponent(officerEmail)}`
+        );
         const data = await res.json();
         setHistory(data);
       } catch (err) {

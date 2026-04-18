@@ -33,6 +33,8 @@ export default function OfficerAuthPage() {
 
             if (response.ok) {
                 if (isLogin) {
+                    // Store officer email in localStorage for query tracking
+                    localStorage.setItem("officerEmail", formData.email);
                     alert("Authentication Successful");
                     navigate("/officer/dashboard");
                 } else {
