@@ -54,7 +54,7 @@ export default function AdminDashboardPage() {
 
             <div style={styles.dashboardLayout}>
                 <nav style={styles.sidebar}>
-                    <div style={styles.sidebarContent}>
+                    <div style={styles.brandSection}>
                         <div style={styles.adminTitle}>ADMIN CONSOLE</div>
 
                         <div style={styles.profileSection}>
@@ -64,45 +64,45 @@ export default function AdminDashboardPage() {
                                 <div style={styles.profileEmail}>admin@nic.in</div>
                             </div>
                         </div>
+                    </div>
 
-                        <div style={styles.divider}></div>
+                    <div style={styles.divider}></div>
 
-                        <div
-                            style={{ ...styles.navItem, ...styles.activeNavItem }}
-                            onClick={() => navigate("/admin/dashboard")}
-                        >
-                            🏠 Dashboard
-                        </div>
-                        <div
-                            style={styles.navItem}
-                            onClick={() => navigate("/admin/upload")}
-                        >
-                            📤 Upload Document
-                        </div>
-                        <div
-                            style={styles.navItem}
-                            onClick={() => navigate("/admin/documents")}
-                        >
-                            📁 Manage Documents
-                        </div>
-                        <div
-                            style={styles.navItem}
-                            onClick={() => navigate("/admin/manage-admins")}
-                        >
-                            👥 Manage Admins
-                        </div>
-                        <div
-                            style={styles.navItem}
-                            onClick={() => navigate("/admin/manage-officers")}
-                        >
-                            👮 Manage Officers
-                        </div>
-                        <div
-                            style={styles.logoutItem}
-                            onClick={() => navigate("/")}
-                        >
-                            🚪 Logout
-                        </div>
+                    <div
+                        style={{ ...styles.navItem, ...styles.activeNavItem }}
+                        onClick={() => navigate("/admin/dashboard")}
+                    >
+                        🏠 Dashboard
+                    </div>
+                    <div
+                        style={styles.navItem}
+                        onClick={() => navigate("/admin/upload")}
+                    >
+                        📤 Upload Document
+                    </div>
+                    <div
+                        style={styles.navItem}
+                        onClick={() => navigate("/admin/documents")}
+                    >
+                        📁 Manage Documents
+                    </div>
+                    <div
+                        style={styles.navItem}
+                        onClick={() => navigate("/admin/manage-admins")}
+                    >
+                        👥 Manage Admins
+                    </div>
+                    <div
+                        style={styles.navItem}
+                        onClick={() => navigate("/admin/manage-officers")}
+                    >
+                        👮 Manage Officers
+                    </div>
+                    <div
+                        style={styles.logoutItem}
+                        onClick={() => navigate("/")}
+                    >
+                        🚪 Logout
                     </div>
                 </nav>
 
@@ -172,10 +172,10 @@ const styles = {
         overflow: "hidden",
     },
     sidebar: {
-        width: "260px",
+        width: "280px",
         backgroundColor: "#ffffff",
         borderRight: "1px solid #e2e8f0",
-        padding: "24px 20px",
+        padding: "24px",
         display: "flex",
         flexDirection: "column",
         overflowY: "auto",
@@ -188,13 +188,13 @@ const styles = {
     },
     adminTitle: {
         fontSize: "11px",
-        color: "#94a3b8",
         fontWeight: "700",
+        color: "#94a3b8",
         textTransform: "uppercase",
         letterSpacing: "1px",
         marginBottom: "16px",
-        padding: "0",
     },
+    brandSection: { marginBottom: "24px" },
     profileSection: {
         display: "flex",
         alignItems: "center",
@@ -202,7 +202,6 @@ const styles = {
         padding: "12px",
         backgroundColor: "#f8fafc",
         borderRadius: "8px",
-        marginBottom: "16px",
     },
     profileIcon: {
         fontSize: "24px",
@@ -224,35 +223,32 @@ const styles = {
     divider: {
         height: "1px",
         backgroundColor: "#e2e8f0",
-        marginBottom: "16px",
+        marginBottom: "20px",
     },
     navItem: {
-        padding: "10px 14px",
-        borderRadius: "6px",
-        fontSize: "13px",
-        fontWeight: "500",
+        padding: "14px 18px",
+        borderRadius: "8px",
+        fontSize: "14px",
+        fontWeight: "600",
         color: "#475569",
         cursor: "pointer",
-        transition: "all 0.2s ease",
-        backgroundColor: "transparent",
-        marginBottom: "4px",
+        marginBottom: "6px",
+        transition: "all 0.2s",
     },
     activeNavItem: {
         backgroundColor: "#003d6b",
         color: "#ffffff",
-        fontWeight: "600",
+        boxShadow: "0 4px 6px rgba(0,61,107,0.2)",
     },
     logoutItem: {
-        marginTop: "auto",
-        padding: "10px 14px",
-        borderRadius: "6px",
-        fontSize: "13px",
-        fontWeight: "500",
         color: "#dc2626",
+        marginTop: "auto",
+        padding: "14px 18px",
+        borderRadius: "8px",
+        fontSize: "14px",
+        fontWeight: "600",
         cursor: "pointer",
-        transition: "all 0.2s ease",
-        backgroundColor: "transparent",
-        marginBottom: "0",
+        transition: "all 0.2s",
     },
     mainContent: {
         flex: 1,

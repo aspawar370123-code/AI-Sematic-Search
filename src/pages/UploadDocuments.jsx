@@ -128,34 +128,34 @@ const UploadDocuments = () => {
       <div style={styles.dashboardLayout}>
         {/* Sidebar */}
         <nav style={styles.sidebar}>
-          <div style={styles.sidebarContent}>
+          <div style={styles.brandSection}>
             <div style={styles.adminTitle}>ADMIN CONSOLE</div>
             <div style={styles.profileSection}>
               <div style={styles.profileIcon}>👤</div>
-              <div>
+              <div style={styles.profileInfo}>
                 <div style={styles.profileName}>Administrator</div>
                 <div style={styles.profileEmail}>admin@nic.in</div>
               </div>
             </div>
-            <div style={styles.divider}></div>
-            <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
-              🏠 Dashboard
-            </div>
-            <div style={{...styles.navItem, ...styles.activeNavItem}} onClick={() => navigate("/admin/upload")}>
-              📤 Upload Document
-            </div>
-            <div style={styles.navItem} onClick={() => navigate("/admin/documents")}>
-              📁 Manage Documents
-            </div>
-            <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
-              👥 Manage Admins
-            </div>
-            <div style={styles.navItem} onClick={() => navigate("/admin/manage-officers")}>
-              👮 Manage Officers
-            </div>
-            <div style={styles.logoutItem} onClick={() => navigate("/")}>
-              🚪 Logout
-            </div>
+          </div>
+          <div style={styles.divider}></div>
+          <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
+            🏠 Dashboard
+          </div>
+          <div style={{...styles.navItem, ...styles.activeNavItem}} onClick={() => navigate("/admin/upload")}>
+            📤 Upload Document
+          </div>
+          <div style={styles.navItem} onClick={() => navigate("/admin/documents")}>
+            📁 Manage Documents
+          </div>
+          <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
+            👥 Manage Admins
+          </div>
+          <div style={styles.navItem} onClick={() => navigate("/admin/manage-officers")}>
+            👮 Manage Officers
+          </div>
+          <div style={styles.logoutItem} onClick={() => navigate("/")}>
+            🚪 Logout
           </div>
         </nav>
 
@@ -264,17 +264,18 @@ const styles = {
   headerTitle: { fontSize: "16px", fontWeight: "700", color: "#0f172a", margin: 0 },
   headerSubtitle: { fontSize: "12px", color: "#64748b", margin: 0 },
   dashboardLayout: { flex: 1, display: "flex", overflow: "hidden" },
-  sidebar: { width: "260px", backgroundColor: "#ffffff", borderRight: "1px solid #e2e8f0", padding: "40px 20px", flexShrink: 0 },
-  sidebarContent: { display: "flex", flexDirection: "column", gap: "12px" },
-  adminTitle: { fontSize: "13px", color: "#475569", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.5px", marginBottom: "20px", padding: "0 10px" },
-  profileSection: { display: "flex", alignItems: "center", gap: "12px", padding: "16px", backgroundColor: "#f8fafc", borderRadius: "10px", marginBottom: "20px" },
-  profileIcon: { fontSize: "32px", width: "48px", height: "48px", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#e0e7ff", borderRadius: "50%" },
-  profileName: { fontSize: "14px", fontWeight: "700", color: "#1e293b" },
+  sidebar: { width: "280px", backgroundColor: "#ffffff", borderRight: "1px solid #e2e8f0", padding: "24px", display: "flex", flexDirection: "column", overflowY: "auto", flexShrink: 0 },
+  brandSection: { marginBottom: "24px" },
+  adminTitle: { fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "16px" },
+  profileSection: { display: "flex", alignItems: "center", gap: "12px", padding: "12px", backgroundColor: "#f8fafc", borderRadius: "8px" },
+  profileIcon: { fontSize: "24px" },
+  profileInfo: {},
+  profileName: { fontSize: "14px", fontWeight: "600", color: "#0f172a" },
   profileEmail: { fontSize: "12px", color: "#64748b" },
   divider: { height: "1px", backgroundColor: "#e2e8f0", marginBottom: "20px" },
-  navItem: { padding: "14px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", color: "#475569", cursor: "pointer", backgroundColor: "transparent" },
+  navItem: { padding: "14px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", color: "#475569", cursor: "pointer", marginBottom: "6px", transition: "all 0.2s" },
   activeNavItem: { backgroundColor: "#003d6b", color: "#ffffff", boxShadow: "0 4px 6px rgba(0,61,107,0.2)" },
-  logoutItem: { color: "#dc2626" },
+  logoutItem: { color: "#dc2626", marginTop: "auto", padding: "14px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: "pointer", transition: "all 0.2s" },
   mainContent: { flex: 1, overflowY: "auto" },
 };
 

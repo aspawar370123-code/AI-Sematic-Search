@@ -107,26 +107,24 @@ export default function ManageOfficers() {
 
                     <div style={styles.divider}></div>
 
-                    <nav style={styles.nav}>
-                        <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
-                            🏠 Dashboard
-                        </div>
-                        <div style={styles.navItem} onClick={() => navigate("/admin/upload")}>
-                            📤 Upload Document
-                        </div>
-                        <div style={styles.navItem} onClick={() => navigate("/admin/documents")}>
-                            📁 Manage Documents
-                        </div>
-                        <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
-                            👥 Manage Admins
-                        </div>
-                        <div style={{...styles.navItem, ...styles.navItemActive}}>
-                            👮 Manage Officers
-                            {pendingCount > 0 && (
-                                <span style={styles.badge}>{pendingCount}</span>
-                            )}
-                        </div>
-                    </nav>
+                    <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
+                        🏠 Dashboard
+                    </div>
+                    <div style={styles.navItem} onClick={() => navigate("/admin/upload")}>
+                        📤 Upload Document
+                    </div>
+                    <div style={styles.navItem} onClick={() => navigate("/admin/documents")}>
+                        📁 Manage Documents
+                    </div>
+                    <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
+                        👥 Manage Admins
+                    </div>
+                    <div style={{...styles.navItem, ...styles.navItemActive}}>
+                        👮 Manage Officers
+                        {pendingCount > 0 && (
+                            <span style={styles.badge}>{pendingCount}</span>
+                        )}
+                    </div>
 
                     <div style={styles.logoutBtn} onClick={() => navigate("/")}>
                         🚪 Logout
@@ -267,7 +265,6 @@ const styles = {
     profileName: { fontSize: "14px", fontWeight: "600", color: "#0f172a" },
     profileEmail: { fontSize: "12px", color: "#64748b" },
     divider: { height: "1px", backgroundColor: "#e2e8f0", marginBottom: "20px" },
-    nav: { flex: 1, display: "flex", flexDirection: "column", gap: "8px" },
     navItem: {
         padding: "14px 18px",
         borderRadius: "8px",
@@ -275,10 +272,8 @@ const styles = {
         fontWeight: "600",
         color: "#475569",
         cursor: "pointer",
-        transition: "all 0.2s",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between"
+        marginBottom: "6px",
+        transition: "all 0.2s"
     },
     navItemActive: { backgroundColor: "#003d6b", color: "#ffffff", boxShadow: "0 4px 6px rgba(0,61,107,0.2)" },
     badge: {
@@ -287,17 +282,17 @@ const styles = {
         padding: "2px 8px",
         borderRadius: "12px",
         fontSize: "12px",
-        fontWeight: "bold"
+        fontWeight: "bold",
+        marginLeft: "auto"
     },
     logoutBtn: {
+        color: "#dc2626",
+        marginTop: "auto",
         padding: "14px 18px",
         borderRadius: "8px",
         fontSize: "14px",
         fontWeight: "600",
-        color: "#dc2626",
         cursor: "pointer",
-        textAlign: "center",
-        marginTop: "auto",
         transition: "all 0.2s"
     },
     main: { flex: 1, padding: "40px", overflowY: "auto" },
