@@ -556,21 +556,47 @@ app.post("/api/officer/search", async (req, res) => {
       docFrequency[chunk.docId] = (docFrequency[chunk.docId] || 0) + 1;
     });
 
-    // Apply frequency boost to chunks
+    // Apply tiered frequency boost to chunks
     enrichedChunks.forEach(chunk => {
       const frequency = docFrequency[chunk.docId] || 0;
       const multiQueryCount = chunk.retrievedBy.length;
 
-      // Apply boost if: 3+ chunks in top 20 and 2+ queries
-      if (frequency >= 3 && multiQueryCount >= 2) {
-        // Frequency boost formula
-        const freqBoost = 1 + (frequency * 0.05) + (multiQueryCount * 0.03);
-        chunk.rrfScore = chunk.rrfScore * freqBoost;
-        chunk.frequencyBoosted = true;
-        chunk.frequencyBoostAmount = freqBoost;
+      // Only apply boost if found by 2+ queries
+      if (multiQueryCount >= 2) {
+        let freqBoost = 1.0; // Default: no boost
+
+        // Tiered boosting based on frequency
+        if (frequency >= 10) {
+          // VERY HIGH frequency (10+ chunks) - Extremely comprehensive document
+          freqBoost = 1.50 + (multiQueryCount * 0.05); // 50% base + 5% per query
+        } else if (frequency >= 7) {
+          // HIGH frequency (7-9 chunks) - Very comprehensive document
+          freqBoost = 1.35 + (multiQueryCount * 0.04); // 35% base + 4% per query
+        } else if (frequency >= 4) {
+          // MEDIUM-HIGH frequency (4-6 chunks) - Comprehensive document
+          freqBoost = 1.25 + (multiQueryCount * 0.03); // 25% base + 3% per query
+        } else if (frequency >= 3) {
+          // MEDIUM frequency (3 chunks) - Moderately relevant document
+          freqBoost = 1.15 + (multiQueryCount * 0.02); // 15% base + 2% per query
+        }
+        // else: frequency < 3, no boost applied
+
+        if (freqBoost > 1.0) {
+          chunk.rrfScore = chunk.rrfScore * freqBoost;
+          chunk.frequencyBoosted = true;
+          chunk.frequencyBoostAmount = freqBoost;
+          chunk.frequencyTier = frequency >= 10 ? 'VERY HIGH' : 
+                                frequency >= 7 ? 'HIGH' : 
+                                frequency >= 4 ? 'MEDIUM-HIGH' : 'MEDIUM';
+        } else {
+          chunk.frequencyBoosted = false;
+          chunk.frequencyBoostAmount = 1.0;
+          chunk.frequencyTier = 'NONE';
+        }
       } else {
         chunk.frequencyBoosted = false;
         chunk.frequencyBoostAmount = 1.0;
+        chunk.frequencyTier = 'NONE';
       }
     });
 
@@ -579,8 +605,18 @@ app.post("/api/officer/search", async (req, res) => {
 
     console.log("\nTop 10 after frequency boost:");
     enrichedChunks.slice(0, 10).forEach((c, i) => {
-      const freqBoost = c.frequencyBoosted ? ` [FREQ: ${c.frequencyBoostAmount.toFixed(2)}x]` : '';
+      const freqBoost = c.frequencyBoosted ? ` [FREQ: ${c.frequencyBoostAmount.toFixed(2)}x | ${c.frequencyTier}]` : '';
       console.log(`  ${i + 1}. [${c.rrfScore.toFixed(4)}] ${c.title}${freqBoost}`);
+    });
+
+    console.log("\nFrequency boost summary:");
+    const boostedDocs = new Set();
+    enrichedChunks.forEach(c => {
+      if (c.frequencyBoosted && !boostedDocs.has(c.docId)) {
+        boostedDocs.add(c.docId);
+        const freq = docFrequency[c.docId];
+        console.log(`  - ${c.title.substring(0, 40)}... | ${freq} chunks | ${c.frequencyBoostAmount.toFixed(2)}x boost | ${c.frequencyTier}`);
+      }
     });
 
     // STEP 7: Select top 10 chunks and rerank with Jina
