@@ -743,6 +743,7 @@ app.post("/api/officer/search", async (req, res) => {
         year: d.year,
         docType: d.docType,
         excerpt: d.excerpt,
+        score: d.score,  // This is what SearchPolicy uses for the score bar
         scorePercent: d.scorePercent,
         rerankScore: d.rerankScore,
         fileUrl: d.fileUrl,
