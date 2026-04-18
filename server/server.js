@@ -874,9 +874,8 @@ app.use(express.static(distPath));
 
 // Catch-all route: serve index.html for any route not handled by API
 // This MUST be the last route - it handles all non-API routes for React Router
-app.get('*', (req, res) => {
+app.get('/*', (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
-
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
