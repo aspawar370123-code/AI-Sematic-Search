@@ -83,21 +83,19 @@ export default function ManageAdmins() {
   return (
     <div style={styles.wrapper}>
       {/* Header */}
-      <header style={styles.topHeader}>
-        <div style={styles.headerContent}>
-          <div style={styles.logoSection}>
-            <div style={styles.headerEmblem}>🏛️</div>
-            <div style={styles.headerText}>
-              <h1 style={styles.headerTitle}>Department of Higher Education</h1>
-              <p style={styles.headerSubtitle}>Ministry of Education | Government of India</p>
-            </div>
+      <header style={styles.header}>
+        <div style={styles.logoSection}>
+          <div style={styles.emblem}>🏛️</div>
+          <div>
+            <h1 style={styles.headerTitle}>Department of Higher Education</h1>
+            <p style={styles.headerSubtitle}>Ministry of Education | Government of India</p>
           </div>
         </div>
       </header>
 
       <div style={styles.dashboardLayout}>
         {/* Sidebar */}
-        <aside style={styles.sidebar}>
+        <nav style={styles.sidebar}>
           <div style={styles.brandSection}>
             <div style={styles.adminTitle}>ADMIN CONSOLE</div>
             <div style={styles.profileSection}>
@@ -129,7 +127,7 @@ export default function ManageAdmins() {
           <div style={styles.logoutItem} onClick={() => navigate("/")}>
             🚪 Logout
           </div>
-        </aside>
+        </nav>
 
         {/* Main Content */}
         <main style={styles.mainContent}>
@@ -261,16 +259,22 @@ const styles = {
     fontFamily: "'Inter', 'Segoe UI', sans-serif",
     display: "flex",
     flexDirection: "column",
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#f0f4f8",
   },
-  topHeader: { backgroundColor: "#ffffff", borderBottom: "2px solid #e2e8f0", padding: "20px 40px" },
-  headerContent: { maxWidth: "1400px", margin: "0 auto" },
+  header: {
+    width: "100%",
+    backgroundColor: "#ffffff",
+    borderBottom: "1px solid #e2e8f0",
+    padding: "16px 40px",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.03)",
+    boxSizing: "border-box",
+    zIndex: 10,
+  },
   logoSection: { display: "flex", alignItems: "center", gap: "16px" },
-  headerEmblem: { fontSize: "36px" },
-  headerText: {},
-  headerTitle: { fontSize: "20px", fontWeight: "700", color: "#0f172a", margin: 0, lineHeight: "1.2" },
-  headerSubtitle: { fontSize: "13px", color: "#64748b", margin: "4px 0 0 0" },
-  dashboardLayout: { display: "flex", flex: 1, overflow: "hidden" },
+  emblem: { fontSize: "32px" },
+  headerTitle: { fontSize: "16px", fontWeight: "700", color: "#0f172a", margin: 0 },
+  headerSubtitle: { fontSize: "12px", color: "#64748b", margin: 0 },
+  dashboardLayout: { flex: 1, display: "flex", overflow: "hidden" },
   sidebar: {
     width: "280px",
     backgroundColor: "#ffffff",
@@ -279,6 +283,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     overflowY: "auto",
+    flexShrink: 0,
   },
   brandSection: { marginBottom: "24px" },
   adminTitle: {
@@ -344,10 +349,10 @@ const styles = {
     cursor: "pointer",
     transition: "all 0.2s",
   },
-  mainContent: { flex: 1, padding: "40px", overflowY: "auto" },
+  mainContent: { flex: 1, padding: "60px", overflowY: "auto" },
   contentHeader: { marginBottom: "32px", display: "flex", justifyContent: "space-between", alignItems: "center" },
-  title: { fontSize: "28px", fontWeight: "800", color: "#1e293b", margin: 0 },
-  subtitle: { fontSize: "14px", color: "#64748b", marginTop: "4px" },
+  title: { fontSize: "30px", fontWeight: "800", color: "#0f172a", margin: "0 0 8px 0" },
+  subtitle: { fontSize: "16px", color: "#64748b", margin: 0 },
   createBtn: { backgroundColor: "#003d6b", color: "#ffffff", border: "none", padding: "12px 24px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: "pointer" },
   loading: { textAlign: "center", padding: "40px", color: "#64748b" },
   tableContainer: { backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", overflow: "hidden" },
