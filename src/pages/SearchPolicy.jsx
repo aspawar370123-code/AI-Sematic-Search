@@ -209,7 +209,7 @@ useEffect(() => {
           <div style={{ ...styles.navItem, ...styles.activeNavItem }}><span>🔍</span> Search Policy</div>
           <div style={styles.navItem} onClick={() => navigate("/officer/history")}><span>📜</span> Query History</div>
         </nav>
-        <div style={styles.logoutBtn} onClick={() => navigate("/officer/login")}>Logout</div>
+        <div style={styles.logoutBtn} onClick={() => navigate("/")}>Logout</div>
       </aside>
 
       {/* ── MAIN CONTENT ── */}

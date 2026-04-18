@@ -138,7 +138,7 @@ const UploadDocuments = () => {
               </div>
             </div>
             <div style={styles.divider}></div>
-            {["Dashboard", "Upload Document", "Manage Documents", "Logout"].map((item) => (
+            {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item) => (
               <div
                 key={item}
                 style={{
@@ -150,6 +150,8 @@ const UploadDocuments = () => {
                   if (item === "Logout") navigate("/");
                   if (item === "Dashboard") navigate("/admin/dashboard");
                   if (item === "Manage Documents") navigate("/admin/documents");
+                  if (item === "Manage Admins") navigate("/admin/manage-admins");
+                  if (item === "Manage Officers") navigate("/admin/manage-officers");
                 }}
               >
                 {item}

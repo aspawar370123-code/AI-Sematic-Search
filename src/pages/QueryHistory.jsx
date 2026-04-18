@@ -49,7 +49,7 @@ export default function QueryHistory() {
           <div style={styles.navItem} onClick={() => navigate("/officer/search")}><span>🔍</span> Search Policy</div>
           <div style={{ ...styles.navItem, ...styles.activeNavItem }}><span>📜</span> Query History</div>
         </nav>
-        <div style={styles.logoutBtn} onClick={() => navigate("/officer/login")}>Logout</div>
+        <div style={styles.logoutBtn} onClick={() => navigate("/")}>Logout</div>
       </aside>
 
       {/* Main Content */}

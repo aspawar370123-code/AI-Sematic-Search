@@ -6,6 +6,8 @@ import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminRegister from "./pages/AdminRegister";
 import UploadDocuments from "./pages/UploadDocuments";
 import ManageDocuments from "./pages/ManageDocuments";
+import ManageAdmins from "./pages/ManageAdmins";
+import ManageOfficers from "./pages/ManageOfficers";
 import OfficerLogin from "./pages/OfficerLogin";
 import OfficerDashboard from "./pages/OfficerDashboard";
 import SearchPolicy from "./pages/SearchPolicy";
@@ -27,10 +29,12 @@ export default function App() {
         <Route path="/admin/register" element={<AdminRegister />} />
         <Route path="/admin/upload" element={<UploadDocuments />} />
         <Route path="/admin/documents" element={<ManageDocuments />} />
-        <Route path="/officer/login" element={<OfficerLogin/>} />
-        <Route path="/officer/dashboard" element={<OfficerDashboard/>} />
-      <Route path="/officer/search" element={<SearchPolicy />} />
-      <Route path="/officer/history" element={<QueryHistory />} />
+        <Route path="/admin/manage-admins" element={<ManageAdmins />} />
+        <Route path="/admin/manage-officers" element={<ManageOfficers />} />
+        <Route path="/officer/login" element={<OfficerLogin />} />
+        <Route path="/officer/dashboard" element={<OfficerDashboard />} />
+        <Route path="/officer/search" element={<SearchPolicy />} />
+        <Route path="/officer/history" element={<QueryHistory />} />
       </Routes>
 
     </BrowserRouter>

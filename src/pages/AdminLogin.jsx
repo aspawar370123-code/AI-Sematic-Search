@@ -4,8 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 export default function AdminAuthPage() {
     const navigate = useNavigate();
-    const [isLogin, setIsLogin] = useState(true); // Toggle between Login and Sign-up
-    const [formData, setFormData] = useState({ email: "", password: "", name: "" });
+    const [formData, setFormData] = useState({ email: "", password: "" });
 
     useEffect(() => {
         document.body.style.margin = "0";
@@ -15,44 +14,26 @@ export default function AdminAuthPage() {
     }, []);
 
     const handleSubmit = async (e) => {
-
         e.preventDefault();
 
-        if (isLogin) {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/login`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(formData)
+        });
 
-            const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/login`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(formData)
-            });
+        const data = await response.json();
 
-            const data = await response.json();
-
-            if (response.ok) {
-                alert("Login successful");
-                navigate("/admin/dashboard");
-            } else {
-                alert(data.message);
-            }
-
+        if (response.ok) {
+            // Store admin email for tracking who creates new admins
+            localStorage.setItem("adminEmail", formData.email);
+            alert("Login successful");
+            navigate("/admin/dashboard");
         } else {
-
-            const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/admin/register`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(formData)
-            });
-
-            const data = await response.json();
-
             alert(data.message);
-
         }
-
     };
 
     return (

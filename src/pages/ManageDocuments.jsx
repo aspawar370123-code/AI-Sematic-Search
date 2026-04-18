@@ -152,7 +152,7 @@ const ManageDocuments = () => {
 
             <div style={styles.divider}></div>
 
-            {["Dashboard", "Upload Document", "Manage Documents", "Logout"].map((item) => (
+            {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item) => (
               <div
                 key={item}
                 style={{
@@ -164,6 +164,8 @@ const ManageDocuments = () => {
                   if (item === "Logout") navigate("/");
                   if (item === "Dashboard") navigate("/admin/dashboard");
                   if (item === "Upload Document") navigate("/admin/upload");
+                  if (item === "Manage Admins") navigate("/admin/manage-admins");
+                  if (item === "Manage Officers") navigate("/admin/manage-officers");
                 }}
               >
                 {item}

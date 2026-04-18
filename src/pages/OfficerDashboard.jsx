@@ -28,7 +28,7 @@ export default function OfficerDashboard() {
           </div>
         </nav>
 
-        <div style={styles.logoutBtn} onClick={() => navigate("/officer/login")}>
+        <div style={styles.logoutBtn} onClick={() => navigate("/")}>
           Logout
         </div>
       </aside>

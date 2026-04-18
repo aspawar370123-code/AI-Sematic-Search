@@ -16,7 +16,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const require = createRequire(import.meta.url);
-const { VoyageAIClient } = require("voyageai");
 
 // Internal Modules
 import QueryHistory from "./models/QueryHistory.js";
@@ -119,15 +118,49 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-app.post("/admin/register", async (req, res) => {
-  const { email, password } = req.body;
+// Admin creation route - only for existing admins (no public registration)
+app.post("/admin/create", async (req, res) => {
+  const { email, password, createdBy } = req.body;
   try {
-    if (await Admin.findOne({ email }))
+    if (!email || !password || !createdBy) {
+      return res.status(400).json({ message: "All fields required" });
+    }
+    if (await Admin.findOne({ email })) {
       return res.status(400).json({ message: "Admin already exists" });
-    await new Admin({ email, password }).save();
+    }
+    await new Admin({
+      email,
+      password,
+      createdBy,
+      createdAt: new Date()
+    }).save();
     res.json({ message: "Admin account created successfully" });
-  } catch {
-    res.status(500).json({ message: "Server error" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
+// Get all admins
+app.get("/admin/list", async (req, res) => {
+  try {
+    const admins = await Admin.find().select('-password').sort({ createdAt: -1 });
+    res.json(admins);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch admins" });
+  }
+});
+
+// Delete admin
+app.delete("/admin/:id", async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+    await Admin.findByIdAndDelete(req.params.id);
+    res.json({ message: "Admin deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Delete failed", error: error.message });
   }
 });
 
@@ -137,10 +170,15 @@ app.post("/officer/register", async (req, res) => {
   try {
     if (await Officer.findOne({ email }))
       return res.status(400).json({ message: "Officer already registered" });
-    await new Officer({ name, designation, email, password }).save();
-    res.json({ message: "Registration request submitted" });
-  } catch {
-    res.status(500).json({ message: "Server error" });
+    
+    // Create officer with approved=false (default)
+    await new Officer({ name, designation, email, password, approved: false }).save();
+    
+    res.json({ 
+      message: "Registration request submitted successfully. You will receive access once approved by the administrator." 
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 });
 
@@ -150,10 +188,73 @@ app.post("/officer/login", async (req, res) => {
     const officer = await Officer.findOne({ email });
     if (!officer || officer.password !== password)
       return res.status(401).json({ message: "Invalid credentials" });
+    
+    // Check if officer is approved
+    if (!officer.approved) {
+      return res.status(403).json({ 
+        message: "Your account is pending approval. Please wait for administrator authorization." 
+      });
+    }
+    
     await Officer.findByIdAndUpdate(officer._id, { lastActiveAt: new Date() });
     res.json({ message: "Login successful", officer: { name: officer.name, designation: officer.designation } });
-  } catch {
+  } catch (error) {
     res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Get pending officers (for admin)
+app.get("/admin/officers/pending", async (req, res) => {
+  try {
+    const pending = await Officer.find({ approved: false }).sort({ createdAt: -1 });
+    res.json(pending);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch pending officers" });
+  }
+});
+
+// Get all officers (for admin)
+app.get("/admin/officers", async (req, res) => {
+  try {
+    const officers = await Officer.find().sort({ createdAt: -1 });
+    res.json(officers);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch officers" });
+  }
+});
+
+// Approve officer
+app.patch("/admin/officers/:id/approve", async (req, res) => {
+  const { approvedBy } = req.body;
+  try {
+    const officer = await Officer.findByIdAndUpdate(
+      req.params.id,
+      { 
+        approved: true, 
+        approvedBy: approvedBy,
+        approvedAt: new Date() 
+      },
+      { new: true }
+    );
+    if (!officer) {
+      return res.status(404).json({ message: "Officer not found" });
+    }
+    res.json({ message: "Officer approved successfully", officer });
+  } catch (error) {
+    res.status(500).json({ message: "Approval failed", error: error.message });
+  }
+});
+
+// Reject/Delete officer
+app.delete("/admin/officers/:id", async (req, res) => {
+  try {
+    const officer = await Officer.findByIdAndDelete(req.params.id);
+    if (!officer) {
+      return res.status(404).json({ message: "Officer not found" });
+    }
+    res.json({ message: "Officer request rejected" });
+  } catch (error) {
+    res.status(500).json({ message: "Delete failed", error: error.message });
   }
 });
 
@@ -874,8 +975,20 @@ app.use(express.static(distPath));
 
 // Catch-all route: serve index.html for any route not handled by API
 // This MUST be the last route - it handles all non-API routes for React Router
-// Using regex pattern for Express 5 compatibility
-app.get(/^\/(?!api).*/, (req, res) => {
+app.get('*', (req, res) => {
+  // Don't serve index.html for API routes
+  if (req.path.startsWith('/api') ||
+    req.path.startsWith('/admin') ||
+    req.path.startsWith('/officer') ||
+    req.path.startsWith('/upload') ||
+    req.path.startsWith('/documents') ||
+    req.path.startsWith('/query') ||
+    req.path.startsWith('/stats') ||
+    req.path.startsWith('/health') ||
+    req.path.startsWith('/test-pinecone')) {
+    return res.status(404).json({ message: 'API endpoint not found' });
+  }
+
   res.sendFile(path.join(distPath, 'index.html'));
 });
 const PORT = process.env.PORT || 5000;

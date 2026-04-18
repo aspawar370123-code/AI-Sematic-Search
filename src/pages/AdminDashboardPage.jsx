@@ -67,7 +67,7 @@ export default function AdminDashboardPage() {
 
                         <div style={styles.divider}></div>
 
-                        {["Dashboard", "Upload Document", "Manage Documents", "Logout"].map((item, index) => (
+                        {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item, index) => (
                             <div
                                 key={item}
                                 style={{
@@ -79,6 +79,8 @@ export default function AdminDashboardPage() {
                                     if (item === "Logout") navigate("/");
                                     if (item === "Upload Document") navigate("/admin/upload");
                                     if (item === "Manage Documents") navigate("/admin/documents");
+                                    if (item === "Manage Admins") navigate("/admin/manage-admins");
+                                    if (item === "Manage Officers") navigate("/admin/manage-officers");
                                 }}
                             >
                                 {item}

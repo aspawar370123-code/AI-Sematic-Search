@@ -9,6 +9,14 @@ const adminSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true
+  },
+  createdBy: {
+    type: String,
+    default: "system"
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
   }
 });
 

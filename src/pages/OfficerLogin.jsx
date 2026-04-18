@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 export default function OfficerAuthPage() {
     const navigate = useNavigate();
-    const [isLogin, setIsLogin] = useState(true); 
+    const [isLogin, setIsLogin] = useState(true);
     const [formData, setFormData] = useState({ email: "", password: "", name: "", designation: "" });
 
     useEffect(() => {
@@ -12,11 +12,11 @@ export default function OfficerAuthPage() {
         document.body.style.overflow = "hidden";
         return () => { document.body.style.overflow = "auto"; };
     }, []);
-    
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         const endpoint = isLogin ? "/officer/login" : "/officer/register";
-        
+
         try {
             const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}${endpoint}`, {
                 method: "POST",
@@ -28,7 +28,7 @@ export default function OfficerAuthPage() {
 
             if (response.ok) {
                 alert(isLogin ? "Authentication Successful" : "Registration Request Submitted");
-                if(isLogin) navigate("/officer/dashboard");
+                if (isLogin) navigate("/officer/dashboard");
             } else {
                 alert(data.message || "An error occurred");
             }
@@ -54,14 +54,14 @@ export default function OfficerAuthPage() {
                         <div style={styles.badge}>SECURE OFFICER ACCESS</div>
                         <h2 style={styles.portalHeader}>Nodal Officer Login</h2>
                         <p style={styles.portalDescription}>
-                            Welcome to the Centralized Management System. This portal is strictly 
+                            Welcome to the Centralized Management System. This portal is strictly
                             for verified Departmental Officers and Administrative Staff.
                         </p>
                     </div>
                 </div>
                 <div style={styles.nicBadge}>
-                    <img src="https://upload.wikimedia.org/wikipedia/en/thumb/9/95/National_Informatics_Centre_logo.svg/1200px-National_Informatics_Centre_logo.svg.png" 
-                         alt="NIC Logo" style={{height: '25px', opacity: 0.7}} />
+                    <img src="https://upload.wikimedia.org/wikipedia/en/thumb/9/95/National_Informatics_Centre_logo.svg/1200px-National_Informatics_Centre_logo.svg.png"
+                        alt="NIC Logo" style={{ height: '25px', opacity: 0.7 }} />
                     <p>Designed and Developed by NIC</p>
                 </div>
             </div>
@@ -84,7 +84,7 @@ export default function OfficerAuthPage() {
                                         placeholder="e.g. Dr. Rajesh Kumar"
                                         style={styles.input}
                                         value={formData.name}
-                                        onChange={(e)=>setFormData({...formData, name:e.target.value})}
+                                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                         required
                                     />
                                 </div>
@@ -95,7 +95,7 @@ export default function OfficerAuthPage() {
                                         placeholder="e.g. Section Officer"
                                         style={styles.input}
                                         value={formData.designation}
-                                        onChange={(e)=>setFormData({...formData, designation:e.target.value})}
+                                        onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
                                         required
                                     />
                                 </div>
@@ -109,7 +109,7 @@ export default function OfficerAuthPage() {
                                 placeholder="name@gov.in"
                                 style={styles.input}
                                 value={formData.email}
-                                onChange={(e)=>setFormData({...formData, email:e.target.value})}
+                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                                 required
                             />
                         </div>
@@ -121,12 +121,9 @@ export default function OfficerAuthPage() {
                                 placeholder="••••••••"
                                 style={styles.input}
                                 value={formData.password}
-                                onChange={(e)=>setFormData({...formData, password:e.target.value})}
+                                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                 required
                             />
-                            {isLogin && (
-                                <span style={styles.forgotPassword}>Reset through e-mail?</span>
-                            )}
                         </div>
 
                         <button type="submit" style={styles.submitButton}>
@@ -136,8 +133,8 @@ export default function OfficerAuthPage() {
 
                     <div style={styles.toggleText}>
                         {isLogin ? "Not registered?" : "Already have access?"}{" "}
-                        <span 
-                            style={styles.toggleLink} 
+                        <span
+                            style={styles.toggleLink}
                             onClick={() => setIsLogin(!isLogin)}
                         >
                             {isLogin ? "Apply for credentials" : "Return to Sign In"}
@@ -262,14 +259,6 @@ const styles = {
         fontSize: "15px",
         transition: "all 0.2s",
         outline: "none",
-    },
-    forgotPassword: {
-        fontSize: "12px",
-        color: "#002d5a",
-        textAlign: "right",
-        marginTop: "4px",
-        cursor: "pointer",
-        fontWeight: "600",
     },
     submitButton: {
         marginTop: "10px",
