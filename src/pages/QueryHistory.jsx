@@ -11,16 +11,20 @@ export default function QueryHistory() {
     const fetchHistory = async () => {
       try {
         const officerEmail = localStorage.getItem("officerEmail");
+        console.log("Officer email from localStorage:", officerEmail);
+        
         if (!officerEmail) {
-          console.error("No officer email found");
+          console.error("No officer email found in localStorage");
           setLoading(false);
           return;
         }
         
-        const res = await fetch(
-          `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/officer/history?email=${encodeURIComponent(officerEmail)}`
-        );
+        const url = `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/officer/history?email=${encodeURIComponent(officerEmail)}`;
+        console.log("Fetching history from:", url);
+        
+        const res = await fetch(url);
         const data = await res.json();
+        console.log("History data received:", data);
         setHistory(data);
       } catch (err) {
         console.error("Failed to fetch history", err);

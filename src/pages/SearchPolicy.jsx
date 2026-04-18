@@ -67,11 +67,15 @@ useEffect(() => {
     setLoading(true);
     setSearched(false);
     try {
+      const officerEmail = localStorage.getItem("officerEmail");
+      console.log("Searching with officer email:", officerEmail);
+      
       const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/officer/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           queryText: query,
+          officerEmail: officerEmail || "unknown"
         }),
       });
       if (!res.ok) throw new Error("Search failed");

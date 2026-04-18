@@ -496,6 +496,7 @@ app.post("/api/officer/search", async (req, res) => {
   console.log("\n" + "=".repeat(60));
   console.log("ADVANCED SEARCH - Multi-Query + RRF Fusion");
   console.log("Query:", queryText);
+  console.log("Officer Email:", officerEmail);
   console.log("=".repeat(60));
 
   try {
@@ -936,6 +937,8 @@ app.get("/api/officer/history", async (req, res) => {
   try {
     const { email } = req.query;
     
+    console.log("Fetching history for officer email:", email);
+    
     if (!email) {
       return res.status(400).json({ message: "Officer email is required" });
     }
@@ -944,6 +947,8 @@ app.get("/api/officer/history", async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(50)
       .lean(); // Convert to plain objects for modification
+
+    console.log(`Found ${history.length} queries for ${email}`);
 
     // Handle backward compatibility: map old 'query' field to 'queryText'
     const mappedHistory = history.map(item => ({
