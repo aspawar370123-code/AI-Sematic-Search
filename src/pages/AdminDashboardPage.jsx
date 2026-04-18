@@ -76,6 +76,7 @@ export default function AdminDashboardPage() {
                                     ...(item === "Logout" ? styles.logoutItem : {})
                                 }}
                                 onClick={() => {
+                                    if (item === "Dashboard") navigate("/admin/dashboard");
                                     if (item === "Logout") navigate("/");
                                     if (item === "Upload Document") navigate("/admin/upload");
                                     if (item === "Manage Documents") navigate("/admin/documents");

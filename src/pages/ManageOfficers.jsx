@@ -77,57 +77,78 @@ export default function ManageOfficers() {
     });
 
     return (
-        <div style={styles.container}>
-            <div style={styles.sidebar}>
-                <div style={styles.logo}>
-                    <div style={styles.logoIcon}>🇮🇳</div>
-                    <div>
-                        <div style={styles.logoTitle}>Admin Portal</div>
-                        <div style={styles.logoSubtitle}>Document Management</div>
+        <div style={styles.wrapper}>
+            {/* Header */}
+            <header style={styles.topHeader}>
+                <div style={styles.headerContent}>
+                    <div style={styles.logoSection}>
+                        <div style={styles.headerEmblem}>🏛️</div>
+                        <div style={styles.headerText}>
+                            <h1 style={styles.headerTitle}>Department of Higher Education</h1>
+                            <p style={styles.headerSubtitle}>Ministry of Education | Government of India</p>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <div style={styles.dashboardLayout}>
+                {/* Sidebar */}
+                <div style={styles.sidebar}>
+                    <div style={styles.brandSection}>
+                        <div style={styles.adminTitle}>Admin Console</div>
+                        <div style={styles.profileSection}>
+                            <div style={styles.profileIcon}>👤</div>
+                            <div style={styles.profileInfo}>
+                                <div style={styles.profileName}>Administrator</div>
+                                <div style={styles.profileEmail}>{adminEmail}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={styles.divider}></div>
+
+                    <nav style={styles.nav}>
+                        <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
+                            Dashboard
+                        </div>
+                        <div style={styles.navItem} onClick={() => navigate("/admin/upload")}>
+                            Upload Document
+                        </div>
+                        <div style={styles.navItem} onClick={() => navigate("/admin/documents")}>
+                            Manage Documents
+                        </div>
+                        <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
+                            Manage Admins
+                        </div>
+                        <div style={{...styles.navItem, ...styles.navItemActive}}>
+                            Manage Officers
+                            {pendingCount > 0 && (
+                                <span style={styles.badge}>{pendingCount}</span>
+                            )}
+                        </div>
+                    </nav>
+
+                    <div style={styles.logoutBtn} onClick={() => navigate("/admin/login")}>
+                        Logout
                     </div>
                 </div>
 
-                <nav style={styles.nav}>
-                    <div style={styles.navItem} onClick={() => navigate("/admin/dashboard")}>
-                        📊 Dashboard
+                {/* Main Content */}
+                <div style={styles.main}>
+                    <div style={styles.contentHeader}>
+                        <div>
+                            <h1 style={styles.title}>Manage Officers</h1>
+                            <p style={styles.subtitle}>Review and approve officer access requests</p>
+                        </div>
                     </div>
-                    <div style={styles.navItem} onClick={() => navigate("/admin/upload")}>
-                        📤 Upload Documents
-                    </div>
-                    <div style={styles.navItem} onClick={() => navigate("/admin/manage")}>
-                        📁 Manage Documents
-                    </div>
-                    <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
-                        👥 Manage Admins
-                    </div>
-                    <div style={{...styles.navItem, ...styles.navItemActive}}>
-                        👮 Manage Officers
-                        {pendingCount > 0 && (
-                            <span style={styles.badge}>{pendingCount}</span>
-                        )}
-                    </div>
-                </nav>
 
-                <div style={styles.logoutBtn} onClick={() => navigate("/admin/login")}>
-                    🚪 Logout
-                </div>
-            </div>
-
-            <div style={styles.main}>
-                <div style={styles.header}>
-                    <div>
-                        <h1 style={styles.title}>Manage Officers</h1>
-                        <p style={styles.subtitle}>Review and approve officer access requests</p>
-                    </div>
-                </div>
-
-                <div style={styles.filterBar}>
-                    <button 
-                        style={filter === "all" ? {...styles.filterBtn, ...styles.filterBtnActive} : styles.filterBtn}
-                        onClick={() => setFilter("all")}
-                    >
-                        All Officers ({officers.length})
-                    </button>
+                    <div style={styles.filterBar}>
+                        <button 
+                            style={filter === "all" ? {...styles.filterBtn, ...styles.filterBtnActive} : styles.filterBtn}
+                            onClick={() => setFilter("all")}
+                        >
+                            All Officers ({officers.length})
+                        </button>
                     <button 
                         style={filter === "pending" ? {...styles.filterBtn, ...styles.filterBtnActive} : styles.filterBtn}
                         onClick={() => setFilter("pending")}
@@ -213,36 +234,53 @@ export default function ManageOfficers() {
                         </table>
                     </div>
                 )}
+                </div>
             </div>
         </div>
     );
 }
 
 const styles = {
-    container: { display: "flex", height: "100vh", fontFamily: "system-ui, -apple-system, sans-serif" },
+    wrapper: { display: "flex", flexDirection: "column", height: "100vh", backgroundColor: "#f8fafc", fontFamily: "system-ui, -apple-system, sans-serif" },
+    topHeader: { backgroundColor: "#ffffff", borderBottom: "2px solid #e2e8f0", padding: "20px 40px" },
+    headerContent: { maxWidth: "1400px", margin: "0 auto" },
+    logoSection: { display: "flex", alignItems: "center", gap: "16px" },
+    headerEmblem: { fontSize: "36px" },
+    headerText: {},
+    headerTitle: { fontSize: "20px", fontWeight: "700", color: "#0f172a", margin: 0, lineHeight: "1.2" },
+    headerSubtitle: { fontSize: "13px", color: "#64748b", margin: "4px 0 0 0" },
+    dashboardLayout: { display: "flex", flex: 1, overflow: "hidden" },
     sidebar: {
         width: "280px",
-        backgroundColor: "#003d6b",
-        color: "white",
+        backgroundColor: "#ffffff",
+        borderRight: "1px solid #e2e8f0",
         display: "flex",
         flexDirection: "column",
-        padding: "30px 20px"
+        padding: "24px",
+        overflowY: "auto"
     },
-    logo: { display: "flex", alignItems: "center", gap: "12px", marginBottom: "40px" },
-    logoIcon: { fontSize: "32px" },
-    logoTitle: { fontSize: "18px", fontWeight: "700" },
-    logoSubtitle: { fontSize: "12px", opacity: 0.8 },
+    brandSection: { marginBottom: "24px" },
+    adminTitle: { fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "16px" },
+    profileSection: { display: "flex", alignItems: "center", gap: "12px", padding: "12px", backgroundColor: "#f8fafc", borderRadius: "8px" },
+    profileIcon: { fontSize: "24px" },
+    profileInfo: {},
+    profileName: { fontSize: "14px", fontWeight: "600", color: "#0f172a" },
+    profileEmail: { fontSize: "12px", color: "#64748b" },
+    divider: { height: "1px", backgroundColor: "#e2e8f0", marginBottom: "20px" },
     nav: { flex: 1, display: "flex", flexDirection: "column", gap: "8px" },
     navItem: {
-        padding: "12px 16px",
+        padding: "14px 18px",
         borderRadius: "8px",
+        fontSize: "14px",
+        fontWeight: "600",
+        color: "#475569",
         cursor: "pointer",
         transition: "all 0.2s",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between"
     },
-    navItemActive: { backgroundColor: "rgba(255,255,255,0.15)", fontWeight: "600" },
+    navItemActive: { backgroundColor: "#003d6b", color: "#ffffff", boxShadow: "0 4px 6px rgba(0,61,107,0.2)" },
     badge: {
         backgroundColor: "#ef4444",
         color: "white",
@@ -252,14 +290,18 @@ const styles = {
         fontWeight: "bold"
     },
     logoutBtn: {
-        padding: "12px 16px",
+        padding: "14px 18px",
         borderRadius: "8px",
+        fontSize: "14px",
+        fontWeight: "600",
+        color: "#dc2626",
         cursor: "pointer",
-        backgroundColor: "rgba(255,255,255,0.1)",
         textAlign: "center",
-        marginTop: "20px"
+        marginTop: "auto",
+        transition: "all 0.2s"
     },
-    main: { flex: 1, backgroundColor: "#f8fafc", padding: "40px", overflowY: "auto" },
+    main: { flex: 1, padding: "40px", overflowY: "auto" },
+    contentHeader: { marginBottom: "32px" },
     header: { marginBottom: "30px", display: "flex", justifyContent: "space-between", alignItems: "center" },
     title: { fontSize: "28px", fontWeight: "700", color: "#0f172a", margin: 0 },
     subtitle: { fontSize: "14px", color: "#64748b", marginTop: "5px" },

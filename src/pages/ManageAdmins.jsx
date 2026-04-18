@@ -82,52 +82,63 @@ export default function ManageAdmins() {
 
   return (
     <div style={styles.wrapper}>
-      {/* Sidebar */}
-      <aside style={styles.sidebar}>
-        <div style={styles.brandSection}>
-          <div style={styles.emblem}>🏛️</div>
-          <div>
-            <div style={styles.brandTitle}>Admin Portal</div>
-            <div style={styles.brandSubtitle}>Document Management</div>
+      {/* Header */}
+      <header style={styles.topHeader}>
+        <div style={styles.headerContent}>
+          <div style={styles.logoSection}>
+            <div style={styles.headerEmblem}>🏛️</div>
+            <div style={styles.headerText}>
+              <h1 style={styles.headerTitle}>Department of Higher Education</h1>
+              <p style={styles.headerSubtitle}>Ministry of Education | Government of India</p>
+            </div>
           </div>
         </div>
+      </header>
 
-        <div style={styles.divider}></div>
-
-        {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item) => (
-          <div
-            key={item}
-            style={{
-              ...styles.navItem,
-              ...(item === "Manage Admins" ? styles.activeNavItem : {}),
-              ...(item === "Logout" ? styles.logoutItem : {})
-            }}
-            onClick={() => {
-              if (item === "Logout") navigate("/");
-              if (item === "Dashboard") navigate("/admin/dashboard");
-              if (item === "Upload Document") navigate("/admin/upload");
-              if (item === "Manage Documents") navigate("/admin/documents");
-              if (item === "Manage Officers") navigate("/admin/manage-officers");
-            }}
-          >
-            {item === "Dashboard" && "🏠"}
-            {item === "Upload Document" && "📤"}
-            {item === "Manage Documents" && "📁"}
-            {item === "Manage Admins" && "👥"}
-            {item === "Manage Officers" && "👮"}
-            {item === "Logout" && "🚪"}
-            <span style={{ marginLeft: "10px" }}>{item}</span>
+      <div style={styles.dashboardLayout}>
+        {/* Sidebar */}
+        <aside style={styles.sidebar}>
+          <div style={styles.brandSection}>
+            <div style={styles.adminTitle}>Admin Console</div>
+            <div style={styles.profileSection}>
+              <div style={styles.profileIcon}>👤</div>
+              <div style={styles.profileInfo}>
+                <div style={styles.profileName}>Administrator</div>
+                <div style={styles.profileEmail}>{adminEmail}</div>
+              </div>
+            </div>
           </div>
-        ))}
-      </aside>
 
-      {/* Main Content */}
-      <main style={styles.mainContent}>
-        <div style={styles.header}>
-          <div>
-            <h1 style={styles.title}>Manage Administrators</h1>
-            <p style={styles.subtitle}>View and manage admin accounts</p>
-          </div>
+          <div style={styles.divider}></div>
+
+          {["Dashboard", "Upload Document", "Manage Documents", "Manage Admins", "Manage Officers", "Logout"].map((item) => (
+            <div
+              key={item}
+              style={{
+                ...styles.navItem,
+                ...(item === "Manage Admins" ? styles.activeNavItem : {}),
+                ...(item === "Logout" ? styles.logoutItem : {})
+              }}
+              onClick={() => {
+                if (item === "Logout") navigate("/");
+                if (item === "Dashboard") navigate("/admin/dashboard");
+                if (item === "Upload Document") navigate("/admin/upload");
+                if (item === "Manage Documents") navigate("/admin/documents");
+                if (item === "Manage Officers") navigate("/admin/manage-officers");
+              }}
+            >
+              {item}
+            </div>
+          ))}
+        </aside>
+
+        {/* Main Content */}
+        <main style={styles.mainContent}>
+          <div style={styles.contentHeader}>
+            <div>
+              <h1 style={styles.title}>Manage Administrators</h1>
+              <p style={styles.subtitle}>View and manage admin accounts</p>
+            </div>
           <button style={styles.createBtn} onClick={() => setShowCreateModal(true)}>
             + Create New Admin
           </button>
@@ -239,23 +250,36 @@ export default function ManageAdmins() {
           </div>
         </div>
       )}
+        </main>
+      </div>
     </div>
   );
 }
 
 const styles = {
-  wrapper: { display: "flex", height: "100vh", backgroundColor: "#f8fafc", fontFamily: "'Inter', sans-serif" },
-  sidebar: { width: "280px", backgroundColor: "#ffffff", borderRight: "1px solid #e2e8f0", padding: "24px", display: "flex", flexDirection: "column" },
-  brandSection: { display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" },
-  emblem: { fontSize: "28px" },
-  brandTitle: { fontSize: "16px", fontWeight: "700", color: "#0f172a" },
-  brandSubtitle: { fontSize: "12px", color: "#64748b" },
+  wrapper: { display: "flex", flexDirection: "column", height: "100vh", backgroundColor: "#f8fafc", fontFamily: "'Inter', sans-serif" },
+  topHeader: { backgroundColor: "#ffffff", borderBottom: "2px solid #e2e8f0", padding: "20px 40px" },
+  headerContent: { maxWidth: "1400px", margin: "0 auto" },
+  logoSection: { display: "flex", alignItems: "center", gap: "16px" },
+  headerEmblem: { fontSize: "36px" },
+  headerText: {},
+  headerTitle: { fontSize: "20px", fontWeight: "700", color: "#0f172a", margin: 0, lineHeight: "1.2" },
+  headerSubtitle: { fontSize: "13px", color: "#64748b", margin: "4px 0 0 0" },
+  dashboardLayout: { display: "flex", flex: 1, overflow: "hidden" },
+  sidebar: { width: "280px", backgroundColor: "#ffffff", borderRight: "1px solid #e2e8f0", padding: "24px", display: "flex", flexDirection: "column", overflowY: "auto" },
+  brandSection: { marginBottom: "24px" },
+  adminTitle: { fontSize: "11px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "16px" },
+  profileSection: { display: "flex", alignItems: "center", gap: "12px", padding: "12px", backgroundColor: "#f8fafc", borderRadius: "8px" },
+  profileIcon: { fontSize: "24px" },
+  profileInfo: {},
+  profileName: { fontSize: "14px", fontWeight: "600", color: "#0f172a" },
+  profileEmail: { fontSize: "12px", color: "#64748b" },
   divider: { height: "1px", backgroundColor: "#e2e8f0", marginBottom: "20px" },
-  navItem: { padding: "14px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", color: "#475569", cursor: "pointer", marginBottom: "6px", display: "flex", alignItems: "center" },
+  navItem: { padding: "14px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", color: "#475569", cursor: "pointer", marginBottom: "6px", transition: "all 0.2s" },
   activeNavItem: { backgroundColor: "#003d6b", color: "#ffffff", boxShadow: "0 4px 6px rgba(0,61,107,0.2)" },
   logoutItem: { color: "#dc2626", marginTop: "auto" },
   mainContent: { flex: 1, padding: "40px", overflowY: "auto" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "32px" },
+  contentHeader: { marginBottom: "32px" },
   title: { fontSize: "28px", fontWeight: "800", color: "#1e293b", margin: 0 },
   subtitle: { fontSize: "14px", color: "#64748b", marginTop: "4px" },
   createBtn: { backgroundColor: "#003d6b", color: "#ffffff", border: "none", padding: "12px 24px", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: "pointer" },
