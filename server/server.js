@@ -401,7 +401,6 @@ app.post("/api/officer/search", async (req, res) => {
 
     // Generate 2-3 variations
     const words = queryText.toLowerCase().split(/\s+/);
-    const hasYear = words.some(w => /\d{4}/.test(w));
     const hasDocument = words.some(w => ['report', 'policy', 'document', 'scheme'].includes(w));
 
     // Variation 1: Simplified (remove filler words)
@@ -484,10 +483,10 @@ app.post("/api/officer/search", async (req, res) => {
     chunks.forEach(chunk => {
       // RRF formula: 1/(k + rank)
       const pineconeRRF = 1 / (k + chunk.pineconeRank);
-      
+
       // Multi-query consensus: chunks found by multiple queries get boost
       const multiQueryBoost = 1 + (chunk.retrievedBy.length - 1) * 0.1; // +10% per extra query
-      
+
       // RRF score (no other boosts yet)
       chunk.rrfScore = pineconeRRF * multiQueryBoost;
     });
@@ -548,30 +547,62 @@ app.post("/api/officer/search", async (req, res) => {
 
     // STEP 7: Smart Boosting (Source + Frequency)
     console.log("\n[7/7] Applying smart boosting...");
-    
-    // 7a. Source-mention boost
-    const queryLower = queryText.toLowerCase();
+
+    // Helper: Clean text for matching
+    const clean = str => str.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+
+    // Helper: Calculate Jaccard similarity
+    const jaccardSimilarity = (str1, str2) => {
+      const set1 = new Set(str1.split(" ").filter(w => w.length > 2));
+      const set2 = new Set(str2.split(" ").filter(w => w.length > 2));
+      const intersection = new Set([...set1].filter(x => set2.has(x)));
+      const union = new Set([...set1, ...set2]);
+      return union.size === 0 ? 0 : intersection.size / union.size;
+    };
+
+    // 7a. Smart source-mention boost
+    const queryClean = clean(queryText);
     const mentionedDocs = [];
 
     enrichedChunks.forEach(chunk => {
-      const titleWords = chunk.title.toLowerCase().split(/\s+/);
-      const matchedWords = titleWords.filter(word =>
-        word.length > 3 && queryLower.includes(word)
-      );
-
-      if (matchedWords.length >= 2) {
-        chunk.sourceBoost = 1.3; // 30% boost
+      const titleClean = clean(chunk.title);
+      
+      // Method 1: Exact substring match (either direction)
+      const exactMatch = queryClean.includes(titleClean) || titleClean.includes(queryClean);
+      
+      // Method 2: Word-level matching (2+ significant words)
+      const titleWords = titleClean.split(" ").filter(w => w.length > 3);
+      const queryWords = queryClean.split(" ");
+      const matchedWords = titleWords.filter(word => queryWords.includes(word));
+      const wordMatch = matchedWords.length >= 2;
+      
+      // Method 3: Fuzzy similarity (Jaccard)
+      const similarity = jaccardSimilarity(queryClean, titleClean);
+      const fuzzyMatch = similarity > 0.6; // 60% word overlap
+      
+      // Title match if any method succeeds
+      const titleMatch = exactMatch || wordMatch || fuzzyMatch;
+      
+      if (titleMatch) {
+        chunk.titleMatch = true;
+        chunk.titleMatchMethod = exactMatch ? 'EXACT' : wordMatch ? 'WORD' : 'FUZZY';
+        chunk.titleMatchScore = similarity;
         if (!mentionedDocs.includes(chunk.title)) {
           mentionedDocs.push(chunk.title);
         }
       } else {
-        chunk.sourceBoost = 1.0;
+        chunk.titleMatch = false;
+        chunk.titleMatchMethod = 'NONE';
+        chunk.titleMatchScore = similarity;
       }
     });
 
     if (mentionedDocs.length > 0) {
-      console.log(`✓ Source-mention boost applied to ${mentionedDocs.length} documents:`);
-      mentionedDocs.forEach(doc => console.log(`  - ${doc} (1.3x)`));
+      console.log(`✓ Smart title-match boost applied to ${mentionedDocs.length} documents:`);
+      mentionedDocs.forEach(doc => {
+        const chunk = enrichedChunks.find(c => c.title === doc);
+        console.log(`  - ${doc} (+7% via ${chunk.titleMatchMethod}, similarity: ${(chunk.titleMatchScore * 100).toFixed(0)}%)`);
+      });
     }
 
     // 7b. Frequency boost - count chunks per document in top 30
@@ -581,30 +612,50 @@ app.post("/api/officer/search", async (req, res) => {
       docFrequency[chunk.docId] = (docFrequency[chunk.docId] || 0) + 1;
     });
 
-    // Apply tiered frequency boost
+    // Apply additive boosts (small, controlled increases)
     enrichedChunks.forEach(chunk => {
       const frequency = docFrequency[chunk.docId] || 0;
       const multiQueryCount = chunk.retrievedBy.length;
 
-      let freqBoost = 1.0;
+      // Start with rerank score
+      let finalScore = chunk.rerankScore;
 
-      // Only apply if found by 2+ queries
-      if (multiQueryCount >= 2) {
-        if (frequency >= 10) {
-          freqBoost = 1.50 + (multiQueryCount * 0.05); // VERY HIGH
-        } else if (frequency >= 7) {
-          freqBoost = 1.35 + (multiQueryCount * 0.04); // HIGH
-        } else if (frequency >= 4) {
-          freqBoost = 1.25 + (multiQueryCount * 0.03); // MEDIUM-HIGH
-        } else if (frequency >= 3) {
-          freqBoost = 1.15 + (multiQueryCount * 0.02); // MEDIUM
-        }
+      // Small additive boosts
+      if (chunk.titleMatch) {
+        finalScore += 0.07; // +7% for title match
+        chunk.titleBoostAmount = 0.07;
+      } else {
+        chunk.titleBoostAmount = 0;
       }
 
-      chunk.frequencyBoost = freqBoost;
-      
-      // Apply combined boost to rerank score
-      chunk.finalScore = chunk.rerankScore * chunk.sourceBoost * chunk.frequencyBoost;
+      if (multiQueryCount >= 2) {
+        finalScore += 0.03; // +3% for multi-query consensus
+        chunk.multiQueryBoostAmount = 0.03;
+      } else {
+        chunk.multiQueryBoostAmount = 0;
+      }
+
+      // Frequency-based additive boost (tiered)
+      let freqBoostAmount = 0;
+      if (multiQueryCount >= 2) {
+        if (frequency >= 10) {
+          freqBoostAmount = 0.12; // +12% for very high frequency
+        } else if (frequency >= 7) {
+          freqBoostAmount = 0.09; // +9% for high frequency
+        } else if (frequency >= 4) {
+          freqBoostAmount = 0.06; // +6% for medium-high frequency
+        } else if (frequency >= 3) {
+          freqBoostAmount = 0.03; // +3% for medium frequency
+        }
+      }
+      finalScore += freqBoostAmount;
+      chunk.frequencyBoostAmount = freqBoostAmount;
+
+      // Clamp to maximum of 1.0 (100%)
+      chunk.finalScore = Math.min(finalScore, 1.0);
+
+      // Track total boost applied
+      chunk.totalBoostAmount = chunk.titleBoostAmount + chunk.multiQueryBoostAmount + chunk.frequencyBoostAmount;
     });
 
     // Re-sort by final boosted score
@@ -613,10 +664,12 @@ app.post("/api/officer/search", async (req, res) => {
     console.log("\nTop 10 after smart boosting:");
     enrichedChunks.slice(0, 10).forEach((c, i) => {
       const boosts = [];
-      if (c.sourceBoost > 1.0) boosts.push(`SRC:${c.sourceBoost.toFixed(2)}x`);
-      if (c.frequencyBoost > 1.0) boosts.push(`FREQ:${c.frequencyBoost.toFixed(2)}x`);
+      if (c.titleBoostAmount > 0) boosts.push(`TITLE:+${(c.titleBoostAmount * 100).toFixed(0)}%`);
+      if (c.multiQueryBoostAmount > 0) boosts.push(`MULTI:+${(c.multiQueryBoostAmount * 100).toFixed(0)}%`);
+      if (c.frequencyBoostAmount > 0) boosts.push(`FREQ:+${(c.frequencyBoostAmount * 100).toFixed(0)}%`);
       const boostStr = boosts.length > 0 ? ` [${boosts.join(' ')}]` : '';
-      console.log(`  ${i + 1}. [${c.finalScore.toFixed(4)}] ${c.title}${boostStr}`);
+      const capped = c.finalScore >= 1.0 ? ' [CAPPED]' : '';
+      console.log(`  ${i + 1}. [${c.finalScore.toFixed(4)}] ${c.title}${boostStr}${capped}`);
     });
 
     // STEP 8: Doc-Grouping & Filtering
@@ -647,8 +700,13 @@ app.post("/api/officer/search", async (req, res) => {
         rrfScore: bestChunk.rrfScore,
         rerankScore: bestChunk.rerankScore,
         finalScore: bestChunk.finalScore,
-        sourceBoost: bestChunk.sourceBoost,
-        frequencyBoost: bestChunk.frequencyBoost,
+        titleMatch: bestChunk.titleMatch,
+        titleMatchMethod: bestChunk.titleMatchMethod,
+        titleMatchScore: bestChunk.titleMatchScore,
+        titleBoostAmount: bestChunk.titleBoostAmount,
+        multiQueryBoostAmount: bestChunk.multiQueryBoostAmount,
+        frequencyBoostAmount: bestChunk.frequencyBoostAmount,
+        totalBoostAmount: bestChunk.totalBoostAmount,
         retrievedByCount: bestChunk.retrievedBy.length,
         totalChunks: chunks.length
       });
@@ -706,12 +764,14 @@ app.post("/api/officer/search", async (req, res) => {
       doc.fileName = dbInfo?.fileName || null;
 
       const boosts = [];
-      if (doc.sourceBoost > 1.0) boosts.push(`SRC:${doc.sourceBoost.toFixed(2)}x`);
-      if (doc.frequencyBoost > 1.0) boosts.push(`FREQ:${doc.frequencyBoost.toFixed(2)}x`);
+      if (doc.titleBoostAmount > 0) boosts.push(`TITLE:+${(doc.titleBoostAmount * 100).toFixed(0)}%`);
+      if (doc.multiQueryBoostAmount > 0) boosts.push(`MULTI:+${(doc.multiQueryBoostAmount * 100).toFixed(0)}%`);
+      if (doc.frequencyBoostAmount > 0) boosts.push(`FREQ:+${(doc.frequencyBoostAmount * 100).toFixed(0)}%`);
       const boostStr = boosts.length > 0 ? ` [${boosts.join(' ')}]` : '';
-      
+      const totalBoost = doc.totalBoostAmount > 0 ? ` (+${(doc.totalBoostAmount * 100).toFixed(0)}% total)` : '';
+
       const confidence = doc.rerankScore >= 0.7 ? 'VERY HIGH' : doc.rerankScore >= 0.6 ? 'HIGH' : 'GOOD';
-      console.log(`  → ${doc.title.substring(0, 40)}... | ${doc.scorePercent.toFixed(1)}% | Rerank: ${doc.rerankScore.toFixed(3)} (${confidence})${boostStr}`);
+      console.log(`  → ${doc.title.substring(0, 40)}... | ${doc.scorePercent.toFixed(1)}% | Rerank: ${doc.rerankScore.toFixed(3)} → Final: ${doc.finalScore.toFixed(3)} (${confidence})${boostStr}${totalBoost}`);
       return doc;
     });
 
