@@ -119,7 +119,7 @@ export default function ManageOfficers() {
                     <div style={styles.navItem} onClick={() => navigate("/admin/manage-admins")}>
                         👥 Manage Admins
                     </div>
-                    <div style={{...styles.navItem, ...styles.navItemActive}}>
+                    <div style={{...styles.navItem, ...styles.activeNavItem}}>
                         👮 Manage Officers
                         {pendingCount > 0 && (
                             <span style={styles.badge}>{pendingCount}</span>
@@ -275,7 +275,7 @@ const styles = {
         marginBottom: "6px",
         transition: "all 0.2s"
     },
-    navItemActive: { backgroundColor: "#003d6b", color: "#ffffff", boxShadow: "0 4px 6px rgba(0,61,107,0.2)" },
+    activeNavItem: { backgroundColor: "#003d6b", color: "#ffffff", boxShadow: "0 4px 6px rgba(0,61,107,0.2)" },
     badge: {
         backgroundColor: "#ef4444",
         color: "white",
