@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "build": "cd .. && npm install --legacy-peer-deps && npm run build && cd server && npm install --legacy-peer-deps",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
