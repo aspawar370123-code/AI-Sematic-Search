@@ -239,7 +239,14 @@ export default function ManageOfficers() {
 }
 
 const styles = {
-    wrapper: { display: "flex", flexDirection: "column", height: "100vh", backgroundColor: "#f8fafc", fontFamily: "system-ui, -apple-system, sans-serif" },
+    wrapper: {
+        height: "100vh",
+        width: "100vw",
+        fontFamily: "'Inter', 'Segoe UI', sans-serif",
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: "#f8fafc",
+    },
     topHeader: { backgroundColor: "#ffffff", borderBottom: "2px solid #e2e8f0", padding: "20px 40px" },
     headerContent: { maxWidth: "1400px", margin: "0 auto" },
     logoSection: { display: "flex", alignItems: "center", gap: "16px" },
