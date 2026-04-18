@@ -683,6 +683,14 @@ app.post("/api/officer/search", async (req, res) => {
 
     if (filtered.length === 0) {
       console.log(`⚠️ No documents meet 60% relevance threshold`);
+
+      // Save to history even when no results
+      await new QueryHistory({
+        queryText: queryText,
+        topDocumentTitle: null,
+        results: []
+      }).save();
+
       return res.json({
         documents: [],
         message: "No sufficiently relevant documents found. Try rephrasing your query with more specific terms."
