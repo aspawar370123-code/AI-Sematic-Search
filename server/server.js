@@ -478,7 +478,7 @@ app.post("/api/officer/search", async (req, res) => {
     }
 
     // STEP 3: Enrich chunks with metadata hints
-    console.log("\n[3/6] Enriching chunks with metadata...");
+    console.log("\n[3/7] Enriching chunks with metadata...");
     const enrichedChunks = chunks.map(chunk => {
       const metadata = `[Source: ${chunk.title} | Type: ${chunk.docType} | Authority: ${chunk.authority}]`;
       return {
@@ -490,38 +490,8 @@ app.post("/api/officer/search", async (req, res) => {
 
     console.log(`✓ Enriched ${enrichedChunks.length} chunks with metadata`);
 
-    // STEP 4: Rerank with Jina
-    console.log("\n[4/6] Reranking chunks with Jina...");
-    const t4 = Date.now();
-
-    // Truncate enriched text for reranker (max 1000 chars)
-    const textsForRerank = enrichedChunks.map(c =>
-      c.enrichedText.length > 1000
-        ? c.enrichedText.substring(0, 1000) + '...'
-        : c.enrichedText
-    );
-
-    const reranked = await rerankDocs(queryText, textsForRerank);
-    console.log(`✓ Reranking completed in ${Date.now() - t4}ms`);
-
-    // Attach rerank scores and ranks
-    enrichedChunks.forEach((chunk, idx) => {
-      chunk.rerankScore = reranked[idx]?.score || 0;
-    });
-
-    // Sort by rerank score to get ranks
-    const sortedByRerank = [...enrichedChunks].sort((a, b) => b.rerankScore - a.rerankScore);
-    sortedByRerank.forEach((chunk, idx) => {
-      chunk.rerankRank = idx + 1;
-    });
-
-    console.log("\nTop 5 after reranking:");
-    sortedByRerank.slice(0, 5).forEach((c, i) => {
-      console.log(`  ${i + 1}. [${c.rerankScore.toFixed(4)}] ${c.title}`);
-    });
-
-    // STEP 5: Apply source-mention multiplier
-    console.log("\n[5/6] Applying source-mention boost...");
+    // STEP 4: Apply source-mention multiplier
+    console.log("\n[4/7] Applying source-mention boost...");
     const queryLower = queryText.toLowerCase();
     const mentionedDocs = [];
 
@@ -549,23 +519,22 @@ app.post("/api/officer/search", async (req, res) => {
       console.log(`  No specific documents mentioned in query`);
     }
 
-    // STEP 6: RRF Fusion
-    console.log("\n[6/6] Applying RRF fusion...");
+    // STEP 5: RRF Fusion (without rerank yet)
+    console.log("\n[5/7] Applying RRF fusion...");
     const k = 30; // RRF constant (lower = more emphasis on top ranks)
 
     enrichedChunks.forEach(chunk => {
-      // RRF formula: 1/(k + rank)
+      // RRF formula: 1/(k + rank) - only using Pinecone rank for now
       const pineconeRRF = 1 / (k + chunk.pineconeRank);
-      const rerankRRF = 1 / (k + chunk.rerankRank);
 
       // Multi-query bonus: chunks found by multiple queries get boost
       const multiQueryBoost = 1 + (chunk.retrievedBy.length - 1) * 0.1; // +10% per extra query
 
-      // Combined RRF score with source boost
-      chunk.rrfScore = (pineconeRRF + rerankRRF) * chunk.sourceBoost * multiQueryBoost;
+      // Combined RRF score with source boost (no rerank yet)
+      chunk.rrfScore = pineconeRRF * chunk.sourceBoost * multiQueryBoost;
     });
 
-    // Sort by final RRF score
+    // Sort by RRF score
     enrichedChunks.sort((a, b) => b.rrfScore - a.rrfScore);
 
     console.log("\nTop 10 after RRF fusion:");
@@ -575,19 +544,102 @@ app.post("/api/officer/search", async (req, res) => {
       console.log(`  ${i + 1}. [${c.rrfScore.toFixed(4)}] ${c.title}${boost}${multi}`);
     });
 
+    // STEP 6: Smart chunk frequency boost
+    console.log("\n[6/7] Applying smart chunk frequency boost...");
+
+    // Get top 20 chunks for frequency analysis
+    const top20Chunks = enrichedChunks.slice(0, 20);
+
+    // Count frequency per document in top 20
+    const docFrequency = {};
+    top20Chunks.forEach(chunk => {
+      docFrequency[chunk.docId] = (docFrequency[chunk.docId] || 0) + 1;
+    });
+
+    // Apply frequency boost to chunks
+    enrichedChunks.forEach(chunk => {
+      const frequency = docFrequency[chunk.docId] || 0;
+      const multiQueryCount = chunk.retrievedBy.length;
+
+      // Apply boost if: 3+ chunks in top 20 and 2+ queries
+      if (frequency >= 3 && multiQueryCount >= 2) {
+        // Frequency boost formula
+        const freqBoost = 1 + (frequency * 0.05) + (multiQueryCount * 0.03);
+        chunk.rrfScore = chunk.rrfScore * freqBoost;
+        chunk.frequencyBoosted = true;
+        chunk.frequencyBoostAmount = freqBoost;
+      } else {
+        chunk.frequencyBoosted = false;
+        chunk.frequencyBoostAmount = 1.0;
+      }
+    });
+
+    // Re-sort after frequency boost
+    enrichedChunks.sort((a, b) => b.rrfScore - a.rrfScore);
+
+    console.log("\nTop 10 after frequency boost:");
+    enrichedChunks.slice(0, 10).forEach((c, i) => {
+      const freqBoost = c.frequencyBoosted ? ` [FREQ: ${c.frequencyBoostAmount.toFixed(2)}x]` : '';
+      console.log(`  ${i + 1}. [${c.rrfScore.toFixed(4)}] ${c.title}${freqBoost}`);
+    });
+
+    // STEP 7: Select top 10 chunks and rerank with Jina
+    console.log("\n[7/7] Reranking top 10 chunks with Jina...");
+    const top10ForRerank = enrichedChunks.slice(0, 10);
+    const t7 = Date.now();
+
+    // Truncate enriched text for reranker (max 1000 chars)
+    const textsForRerank = top10ForRerank.map(c =>
+      c.enrichedText.length > 1000
+        ? c.enrichedText.substring(0, 1000) + '...'
+        : c.enrichedText
+    );
+
+    const reranked = await rerankDocs(queryText, textsForRerank);
+    console.log(`✓ Reranking completed in ${Date.now() - t7}ms`);
+
+    // Attach rerank scores to top 10 chunks
+    top10ForRerank.forEach((chunk, idx) => {
+      chunk.rerankScore = reranked[idx]?.score || 0;
+      chunk.rerankRank = idx + 1;
+    });
+
+    // Update RRF scores to include rerank
+    top10ForRerank.forEach(chunk => {
+      const rerankRRF = 1 / (k + chunk.rerankRank);
+      const pineconeRRF = 1 / (k + chunk.pineconeRank);
+      const multiQueryBoost = 1 + (chunk.retrievedBy.length - 1) * 0.1;
+
+      // Final RRF with rerank included
+      chunk.finalRrfScore = (pineconeRRF + rerankRRF) * chunk.sourceBoost * multiQueryBoost * chunk.frequencyBoostAmount;
+    });
+
+    // Sort by rerank score (primary) and finalRrfScore (secondary)
+    top10ForRerank.sort((a, b) => {
+      if (Math.abs(b.rerankScore - a.rerankScore) > 0.05) {
+        return b.rerankScore - a.rerankScore;
+      }
+      return b.finalRrfScore - a.finalRrfScore;
+    });
+
+    console.log("\nTop 10 after reranking:");
+    top10ForRerank.forEach((c, i) => {
+      console.log(`  ${i + 1}. [Rerank: ${c.rerankScore.toFixed(4)}] [RRF: ${c.finalRrfScore.toFixed(4)}] ${c.title}`);
+    });
+
     // Group by document - keep BEST chunk per document
-    console.log("\n[7/6] Grouping by document...");
+    console.log("\n[8/7] Grouping by document...");
     const docChunksMap = new Map();
 
-    // First, group all chunks by document
-    enrichedChunks.forEach(chunk => {
+    // Group top 10 reranked chunks by document
+    top10ForRerank.forEach(chunk => {
       if (!docChunksMap.has(chunk.docId)) {
         docChunksMap.set(chunk.docId, []);
       }
       docChunksMap.get(chunk.docId).push(chunk);
     });
 
-    // Then, for each document, select the chunk with HIGHEST rerank score
+    // For each document, select the chunk with HIGHEST rerank score
     let results = [];
     docChunksMap.forEach((chunks, docId) => {
       // Sort by rerank score (most important metric)
@@ -601,79 +653,17 @@ app.post("/api/officer/search", async (req, res) => {
         year: bestChunk.year,
         docType: bestChunk.docType,
         excerpt: bestChunk.originalText,
-        rrfScore: bestChunk.rrfScore,
-        rerankScore: bestChunk.rerankScore, // Use BEST chunk's rerank score
+        rrfScore: bestChunk.finalRrfScore,
+        rerankScore: bestChunk.rerankScore,
         pineconeScore: bestChunk.pineconeScore,
         sourceBoost: bestChunk.sourceBoost,
         retrievedByCount: bestChunk.retrievedBy.length,
-        totalChunks: chunks.length // Track how many chunks this document has
+        totalChunks: chunks.length,
+        frequencyBoosted: bestChunk.frequencyBoosted
       });
     });
 
-    // CHUNK FREQUENCY BOOST: Smart boosting using RRF scores
-    console.log("\n[8/6] Applying smart chunk frequency boost...");
-
-    // Get top 10 chunks by rerank score
-    const top10Chunks = [...enrichedChunks]
-      .sort((a, b) => b.rerankScore - a.rerankScore)
-      .slice(0, 10);
-
-    // Count frequency and calculate average RRF per document
-    const docStats = {};
-    top10Chunks.forEach(chunk => {
-      if (!docStats[chunk.docId]) {
-        docStats[chunk.docId] = { frequency: 0, rrfScores: [] };
-      }
-      docStats[chunk.docId].frequency++;
-      docStats[chunk.docId].rrfScores.push(chunk.rrfScore);
-    });
-
-    // Apply smart boost to documents - boost BOTH rrfScore and rerankScore
-    results.forEach(doc => {
-      const stats = docStats[doc._id];
-      if (!stats) return; // Document not in top 10
-
-      const frequency = stats.frequency;
-      const avgRRF = stats.rrfScores.reduce((sum, s) => sum + s, 0) / stats.rrfScores.length;
-      const multiQueryCount = doc.retrievedByCount;
-      const baseScore = doc.rerankScore;
-
-      // Apply boost if: 3+ chunks and 2+ queries (removed upper score limit)
-      if (frequency >= 3 && multiQueryCount >= 2 && baseScore >= 0.3) {
-
-        // Smart boost formula: considers frequency, RRF agreement, and multi-query
-        let boost = (frequency * 0.03) + (multiQueryCount * 0.05) + (avgRRF * 0.1);
-
-        // Reduce boost for scores already close to or above threshold
-        if (baseScore >= 0.6) {
-          boost = boost * 0.50; // 50% of boost for already confident scores (60%+)
-        } else if (baseScore >= 0.55) {
-          boost = boost * 0.60; // 60% of boost for 55-60%
-        } else if (baseScore >= 0.5) {
-          boost = boost * 0.65; // 65% of boost for 50-55%
-        }
-        // else: full boost for scores 30-50%
-
-        const oldRerankScore = doc.rerankScore;
-        const oldRrfScore = doc.rrfScore;
-
-        // Apply boost to BOTH scores
-        doc.rerankScore = Math.min(doc.rerankScore + boost, 0.95); // Cap at 95%
-        doc.rrfScore = doc.rrfScore * (1 + boost); // Proportional boost to rrfScore
-
-        console.log(`  ✓ Boosted "${doc.title.substring(0, 40)}..."`);
-        console.log(`    - ${frequency} chunks in top 10, avg RRF: ${avgRRF.toFixed(4)}, ${multiQueryCount} queries`);
-        console.log(`    - Rerank: ${(oldRerankScore * 100).toFixed(1)}% → ${(doc.rerankScore * 100).toFixed(1)}%`);
-        console.log(`    - RRF: ${oldRrfScore.toFixed(4)} → ${doc.rrfScore.toFixed(4)} (+${(boost * 100).toFixed(1)}%)`);
-      } else if (frequency >= 3 && multiQueryCount >= 2) {
-        // Log why boost wasn't applied
-        if (baseScore < 0.3) {
-          console.log(`  ⊘ Skipped "${doc.title.substring(0, 40)}..." - base score too low (${(baseScore * 100).toFixed(1)}%)`);
-        }
-      }
-    });
-
-    // Sort by rerank score (now includes frequency boost)
+    // Sort by rerank score
     results.sort((a, b) => b.rerankScore - a.rerankScore);
 
     console.log(`\nFound ${results.length} unique documents`);
