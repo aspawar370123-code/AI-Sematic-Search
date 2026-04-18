@@ -9,6 +9,11 @@ import https from "https";
 import { Pinecone } from "@pinecone-database/pinecone";
 import { createRequire } from "module";
 import natural from "natural";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const require = createRequire(import.meta.url);
 const { VoyageAIClient } = require("voyageai");
@@ -862,6 +867,18 @@ app.get("/stats", async (req, res) => {
     res.status(500).json({ message: "Failed to fetch stats" });
   }
 });
+
+// Serve static files from React app in production
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(__dirname, '../dist');
+  app.use(express.static(distPath));
+
+  // Catch-all route: serve index.html for any route not handled by API
+  // This allows React Router to handle client-side routing
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
